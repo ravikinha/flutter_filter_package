@@ -124,12 +124,34 @@ class GLRenderer(
     fun setParam(key: String, value: Float) {
         handler.post {
             when (key) {
+                // p0 — primary intensity / amount
                 "warmth", "sepiaStrength", "rgbOffset", "glitchAmount",
                 "blurRadius", "tealStrength", "coolness", "glowIntensity",
-                "grainIntensity" -> params[0] = value
+                "grainIntensity",
+                "edgeStrength", "holoIntensity", "matrixGreen",
+                "outlineStrength", "heatIntensity", "crtScan", "tapeWear",
+                "kaleidoSegments", "auraIntensity", "scanSpeed",
+                "chromeIntensity", "glassRefraction", "prismStrength",
+                "anamorphicFlare", "dreamLensGlow", "auroraSpeed",
+                "rayIntensity", "holoGlassStrength", "trailLength",
+                "neuralDensity" -> params[0] = value
+                // p1 — secondary modifier (often scanlines / hue / contrast)
                 "contrast", "vignetteStrength", "fade", "scanlineIntensity",
-                "distortionAmount", "orangeStrength", "bloomRadius" -> params[1] = value
-                "saturation", "lightLeakStrength", "noiseIntensity" -> params[2] = value
+                "distortionAmount", "orangeStrength", "bloomRadius",
+                "cyberScan", "holoScan", "matrixStreak", "neonHue",
+                "crtChroma", "trackingError", "kaleidoRotation",
+                "scannerGlow",
+                "chromeReflection", "glassTransparency", "prismRainbow",
+                "anamorphicBloom", "dreamLensBloom", "auroraStrength",
+                "rayLength", "holoGlassRainbow", "trailBrightness",
+                "neuralSpeed" -> params[1] = value
+                // p2 — tertiary (overlays / extras)
+                "saturation", "lightLeakStrength", "noiseIntensity",
+                "gridIntensity", "crtBarrel", "vhsProScan",
+                "chromeDistortion", "glassEdge", "prismDispersion",
+                "anamorphicGrain", "dreamLensLeak", "auroraGlow",
+                "rayBloom", "holoGlassGlow", "trailFade",
+                "neuralGlow" -> params[2] = value
             }
         }
     }
@@ -395,13 +417,109 @@ class GLRenderer(
             "cinematic" -> { params[0] = p["tealStrength"] ?: 0f; params[1] = p["orangeStrength"] ?: 0f; params[2] = p["contrast"] ?: 0f }
             "coolBlue" -> { params[0] = p["coolness"] ?: 0f; params[1] = p["contrast"] ?: 0f }
             "dreamGlow" -> { params[0] = p["glowIntensity"] ?: 0f; params[1] = p["bloomRadius"] ?: 0f }
+            "cyberpunkHud" -> {
+                params[0] = p["edgeStrength"] ?: 0f
+                params[1] = p["cyberScan"] ?: 0f
+                params[2] = p["gridIntensity"] ?: 0f
+            }
+            "hologram" -> {
+                params[0] = p["holoIntensity"] ?: 0f
+                params[1] = p["holoScan"] ?: 0f
+            }
+            "matrixVision" -> {
+                params[0] = p["matrixGreen"] ?: 0f
+                params[1] = p["matrixStreak"] ?: 0f
+            }
+            "neonOutline" -> {
+                params[0] = p["outlineStrength"] ?: 0f
+                params[1] = p["neonHue"] ?: 0f
+            }
+            "thermal" -> { params[0] = p["heatIntensity"] ?: 0f }
+            "crtRetro" -> {
+                params[0] = p["crtScan"] ?: 0f
+                params[1] = p["crtChroma"] ?: 0f
+                params[2] = p["crtBarrel"] ?: 0f
+            }
+            "vhsPro" -> {
+                params[0] = p["tapeWear"] ?: 0f
+                params[1] = p["trackingError"] ?: 0f
+                params[2] = p["vhsProScan"] ?: 0f
+            }
+            "kaleidoscope" -> {
+                params[0] = p["kaleidoSegments"] ?: 0f
+                params[1] = p["kaleidoRotation"] ?: 0f
+            }
+            "electricAura" -> { params[0] = p["auraIntensity"] ?: 0f }
+            "scannerVision" -> {
+                params[0] = p["scanSpeed"] ?: 0f
+                params[1] = p["scannerGlow"] ?: 0f
+            }
+            "liquidChrome" -> {
+                params[0] = p["chromeIntensity"] ?: 0f
+                params[1] = p["chromeReflection"] ?: 0f
+                params[2] = p["chromeDistortion"] ?: 0f
+            }
+            "glassMorph" -> {
+                params[0] = p["glassRefraction"] ?: 0f
+                params[1] = p["glassTransparency"] ?: 0f
+                params[2] = p["glassEdge"] ?: 0f
+            }
+            "prismLens" -> {
+                params[0] = p["prismStrength"] ?: 0f
+                params[1] = p["prismRainbow"] ?: 0f
+                params[2] = p["prismDispersion"] ?: 0f
+            }
+            "cinematicAnamorphic" -> {
+                params[0] = p["anamorphicFlare"] ?: 0f
+                params[1] = p["anamorphicBloom"] ?: 0f
+                params[2] = p["anamorphicGrain"] ?: 0f
+            }
+            "dreamLens" -> {
+                params[0] = p["dreamLensGlow"] ?: 0f
+                params[1] = p["dreamLensBloom"] ?: 0f
+                params[2] = p["dreamLensLeak"] ?: 0f
+            }
+            "aurora" -> {
+                params[0] = p["auroraSpeed"] ?: 0f
+                params[1] = p["auroraStrength"] ?: 0f
+                params[2] = p["auroraGlow"] ?: 0f
+            }
+            "lightRays" -> {
+                params[0] = p["rayIntensity"] ?: 0f
+                params[1] = p["rayLength"] ?: 0f
+                params[2] = p["rayBloom"] ?: 0f
+            }
+            "holographicGlass" -> {
+                params[0] = p["holoGlassStrength"] ?: 0f
+                params[1] = p["holoGlassRainbow"] ?: 0f
+                params[2] = p["holoGlassGlow"] ?: 0f
+            }
+            "photonTrails" -> {
+                params[0] = p["trailLength"] ?: 0f
+                params[1] = p["trailBrightness"] ?: 0f
+                params[2] = p["trailFade"] ?: 0f
+            }
+            "neuralGrid" -> {
+                params[0] = p["neuralDensity"] ?: 0f
+                params[1] = p["neuralSpeed"] ?: 0f
+                params[2] = p["neuralGlow"] ?: 0f
+            }
         }
     }
 
     private fun filterIdToIndex(id: String) = when (id) {
         "kodak" -> 1; "vintage" -> 2; "retro" -> 3; "grain" -> 4; "vhs" -> 5
         "bwGlitch" -> 6; "blur" -> 7; "cinematic" -> 8; "coolBlue" -> 9
-        "dreamGlow" -> 10; else -> 0
+        "dreamGlow" -> 10
+        "cyberpunkHud" -> 11; "hologram" -> 12; "matrixVision" -> 13
+        "neonOutline" -> 14; "thermal" -> 15; "crtRetro" -> 16
+        "vhsPro" -> 17; "kaleidoscope" -> 18; "electricAura" -> 19
+        "scannerVision" -> 20
+        "liquidChrome" -> 21; "glassMorph" -> 22; "prismLens" -> 23
+        "cinematicAnamorphic" -> 24; "dreamLens" -> 25; "aurora" -> 26
+        "lightRays" -> 27; "holographicGlass" -> 28; "photonTrails" -> 29
+        "neuralGrid" -> 30
+        else -> 0
     }
 
 }

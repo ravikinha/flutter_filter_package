@@ -241,6 +241,146 @@ ColorFilter _matrixFor(String id) {
         0.025, 0.025, 0.95, 0, 0,
         0,    0,    0,    1, 0,
       ]);
+    case 'cyberpunkHud':
+      return const ColorFilter.matrix([
+        1.10, -0.05, 0.20, 0, 12,
+        -0.20, 1.00, 0.30, 0, -4,
+        0.40, 0.30, 1.10, 0, 22,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'hologram':
+      return const ColorFilter.matrix([
+        0.10, 0.20, 0.40, 0, -10,
+        0.30, 0.75, 0.60, 0,  4,
+        0.40, 0.80, 1.10, 0, 18,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'matrixVision':
+      return const ColorFilter.matrix([
+        0.05, 0.10, 0.00, 0, -10,
+        0.30, 1.20, 0.20, 0, -2,
+        0.05, 0.20, 0.10, 0, -10,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'neonOutline':
+      return const ColorFilter.matrix([
+        0.60, 0.10, 0.30, 0, 12,
+        0.20, 0.30, 0.40, 0,  4,
+        0.40, 0.30, 0.80, 0, 16,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'thermal':
+      return const ColorFilter.matrix([
+        1.50, 0.20, 0.00, 0, -20,
+        0.50, 0.80, 0.00, 0, -30,
+        -0.20, -0.30, 0.40, 0, 20,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'crtRetro':
+      return const ColorFilter.matrix([
+        1.05, 0.05, 0.00, 0, -6,
+        0.00, 0.95, 0.00, 0, -4,
+        0.00, 0.00, 0.85, 0, -10,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'vhsPro':
+      return const ColorFilter.matrix([
+        1.10, 0.00, 0.20, 0,  6,
+        0.00, 0.85, 0.10, 0, -2,
+        0.20, 0.05, 1.10, 0,  6,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'kaleidoscope':
+      return const ColorFilter.matrix([
+        1.10, 0.05, 0.10, 0, 4,
+        0.10, 1.05, 0.10, 0, 4,
+        0.10, 0.05, 1.10, 0, 8,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'electricAura':
+      return const ColorFilter.matrix([
+        0.55, 0.05, 0.30, 0, 4,
+        0.20, 0.45, 0.30, 0, 2,
+        0.30, 0.20, 0.95, 0, 18,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'scannerVision':
+      return const ColorFilter.matrix([
+        0.10, 0.15, 0.00, 0, -8,
+        0.30, 1.00, 0.20, 0, -2,
+        0.15, 0.40, 0.20, 0, -6,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'liquidChrome':
+      return const ColorFilter.matrix([
+        0.90, 0.10, 0.10, 0, 14,
+        0.10, 0.95, 0.10, 0, 14,
+        0.10, 0.10, 1.05, 0, 22,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'glassMorph':
+      return const ColorFilter.matrix([
+        0.85, 0.10, 0.20, 0, 4,
+        0.05, 0.95, 0.20, 0, 8,
+        0.10, 0.15, 1.10, 0, 18,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'prismLens':
+      return const ColorFilter.matrix([
+        1.20, -0.05, 0.00, 0, 8,
+        -0.05, 1.10, -0.05, 0, 0,
+        -0.05, -0.05, 1.20, 0, 8,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'cinematicAnamorphic':
+      return const ColorFilter.matrix([
+        1.20, -0.05, 0.00, 0, 6,
+        -0.05, 1.05, -0.05, 0, -2,
+        -0.20, 0.05, 1.10, 0, -10,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'dreamLens':
+      return const ColorFilter.matrix([
+        1.15, 0.05, 0.00, 0, 14,
+        0.05, 1.05, 0.05, 0, 8,
+        0.00, 0.05, 1.00, 0, 0,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'aurora':
+      return const ColorFilter.matrix([
+        0.30, 0.20, 0.40, 0, 8,
+        0.10, 0.95, 0.20, 0, 14,
+        0.30, 0.30, 0.85, 0, 20,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'lightRays':
+      return const ColorFilter.matrix([
+        1.15, 0.10, 0.00, 0, 16,
+        0.10, 1.10, 0.00, 0, 8,
+        -0.10, 0.05, 0.95, 0, -8,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'holographicGlass':
+      return const ColorFilter.matrix([
+        0.85, 0.20, 0.20, 0, 8,
+        0.10, 0.90, 0.30, 0, 8,
+        0.30, 0.20, 1.10, 0, 16,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'photonTrails':
+      return const ColorFilter.matrix([
+        0.80, 0.05, 0.30, 0, 10,
+        0.05, 0.65, 0.30, 0, 6,
+        0.40, 0.25, 1.05, 0, 18,
+        0,    0,    0,    1, 0,
+      ]);
+    case 'neuralGrid':
+      return const ColorFilter.matrix([
+        0.10, 0.20, 0.00, 0, -10,
+        0.20, 1.10, 0.20, 0, 2,
+        0.10, 0.40, 0.30, 0, -4,
+        0,    0,    0,    1, 0,
+      ]);
     case 'blur':
     case 'dreamGlow':
     case 'vhs':
@@ -271,6 +411,86 @@ Widget? _overlayIconFor(String id) {
     case 'dreamGlow':
       icon = Icons.auto_awesome;
       color = Colors.pinkAccent;
+      break;
+    case 'cyberpunkHud':
+      icon = Icons.grid_3x3;
+      color = const Color(0xFF00E5FF);
+      break;
+    case 'hologram':
+      icon = Icons.view_in_ar;
+      color = const Color(0xFF80EEFF);
+      break;
+    case 'matrixVision':
+      icon = Icons.code;
+      color = const Color(0xFF55FF77);
+      break;
+    case 'neonOutline':
+      icon = Icons.gesture;
+      color = const Color(0xFFB388FF);
+      break;
+    case 'thermal':
+      icon = Icons.thermostat;
+      color = const Color(0xFFFFEB3B);
+      break;
+    case 'crtRetro':
+      icon = Icons.tv_off;
+      color = const Color(0xFFD7C58A);
+      break;
+    case 'vhsPro':
+      icon = Icons.cast_connected;
+      color = const Color(0xFFFF40C0);
+      break;
+    case 'kaleidoscope':
+      icon = Icons.bubble_chart;
+      color = const Color(0xFFFFC1E3);
+      break;
+    case 'electricAura':
+      icon = Icons.bolt;
+      color = const Color(0xFF82B1FF);
+      break;
+    case 'scannerVision':
+      icon = Icons.radar;
+      color = const Color(0xFF00E676);
+      break;
+    case 'liquidChrome':
+      icon = Icons.water_drop;
+      color = const Color(0xFFE0E0E0);
+      break;
+    case 'glassMorph':
+      icon = Icons.diamond;
+      color = const Color(0xFFB3E5FC);
+      break;
+    case 'prismLens':
+      icon = Icons.color_lens;
+      color = const Color(0xFFFFD740);
+      break;
+    case 'cinematicAnamorphic':
+      icon = Icons.movie_filter;
+      color = const Color(0xFFFFAB40);
+      break;
+    case 'dreamLens':
+      icon = Icons.brightness_5;
+      color = const Color(0xFFFFD0B0);
+      break;
+    case 'aurora':
+      icon = Icons.air;
+      color = const Color(0xFF40C4FF);
+      break;
+    case 'lightRays':
+      icon = Icons.wb_sunny;
+      color = const Color(0xFFFFE57F);
+      break;
+    case 'holographicGlass':
+      icon = Icons.layers;
+      color = const Color(0xFF80EEFF);
+      break;
+    case 'photonTrails':
+      icon = Icons.flash_auto;
+      color = const Color(0xFFB388FF);
+      break;
+    case 'neuralGrid':
+      icon = Icons.developer_board;
+      color = const Color(0xFF00E676);
       break;
   }
   if (icon == null) return null;

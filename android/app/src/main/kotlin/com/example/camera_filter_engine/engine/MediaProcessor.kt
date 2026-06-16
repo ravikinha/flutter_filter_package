@@ -573,11 +573,107 @@ object MediaProcessor {
             "cinematic" -> { out[0] = params["tealStrength"] ?: 0f; out[1] = params["orangeStrength"] ?: 0f; out[2] = params["contrast"] ?: 0f }
             "coolBlue" -> { out[0] = params["coolness"] ?: 0f; out[1] = params["contrast"] ?: 0f }
             "dreamGlow" -> { out[0] = params["glowIntensity"] ?: 0f; out[1] = params["bloomRadius"] ?: 0f }
+            "cyberpunkHud" -> {
+                out[0] = params["edgeStrength"] ?: 0f
+                out[1] = params["cyberScan"] ?: 0f
+                out[2] = params["gridIntensity"] ?: 0f
+            }
+            "hologram" -> {
+                out[0] = params["holoIntensity"] ?: 0f
+                out[1] = params["holoScan"] ?: 0f
+            }
+            "matrixVision" -> {
+                out[0] = params["matrixGreen"] ?: 0f
+                out[1] = params["matrixStreak"] ?: 0f
+            }
+            "neonOutline" -> {
+                out[0] = params["outlineStrength"] ?: 0f
+                out[1] = params["neonHue"] ?: 0f
+            }
+            "thermal" -> { out[0] = params["heatIntensity"] ?: 0f }
+            "crtRetro" -> {
+                out[0] = params["crtScan"] ?: 0f
+                out[1] = params["crtChroma"] ?: 0f
+                out[2] = params["crtBarrel"] ?: 0f
+            }
+            "vhsPro" -> {
+                out[0] = params["tapeWear"] ?: 0f
+                out[1] = params["trackingError"] ?: 0f
+                out[2] = params["vhsProScan"] ?: 0f
+            }
+            "kaleidoscope" -> {
+                out[0] = params["kaleidoSegments"] ?: 0f
+                out[1] = params["kaleidoRotation"] ?: 0f
+            }
+            "electricAura" -> { out[0] = params["auraIntensity"] ?: 0f }
+            "scannerVision" -> {
+                out[0] = params["scanSpeed"] ?: 0f
+                out[1] = params["scannerGlow"] ?: 0f
+            }
+            "liquidChrome" -> {
+                out[0] = params["chromeIntensity"] ?: 0f
+                out[1] = params["chromeReflection"] ?: 0f
+                out[2] = params["chromeDistortion"] ?: 0f
+            }
+            "glassMorph" -> {
+                out[0] = params["glassRefraction"] ?: 0f
+                out[1] = params["glassTransparency"] ?: 0f
+                out[2] = params["glassEdge"] ?: 0f
+            }
+            "prismLens" -> {
+                out[0] = params["prismStrength"] ?: 0f
+                out[1] = params["prismRainbow"] ?: 0f
+                out[2] = params["prismDispersion"] ?: 0f
+            }
+            "cinematicAnamorphic" -> {
+                out[0] = params["anamorphicFlare"] ?: 0f
+                out[1] = params["anamorphicBloom"] ?: 0f
+                out[2] = params["anamorphicGrain"] ?: 0f
+            }
+            "dreamLens" -> {
+                out[0] = params["dreamLensGlow"] ?: 0f
+                out[1] = params["dreamLensBloom"] ?: 0f
+                out[2] = params["dreamLensLeak"] ?: 0f
+            }
+            "aurora" -> {
+                out[0] = params["auroraSpeed"] ?: 0f
+                out[1] = params["auroraStrength"] ?: 0f
+                out[2] = params["auroraGlow"] ?: 0f
+            }
+            "lightRays" -> {
+                out[0] = params["rayIntensity"] ?: 0f
+                out[1] = params["rayLength"] ?: 0f
+                out[2] = params["rayBloom"] ?: 0f
+            }
+            "holographicGlass" -> {
+                out[0] = params["holoGlassStrength"] ?: 0f
+                out[1] = params["holoGlassRainbow"] ?: 0f
+                out[2] = params["holoGlassGlow"] ?: 0f
+            }
+            "photonTrails" -> {
+                out[0] = params["trailLength"] ?: 0f
+                out[1] = params["trailBrightness"] ?: 0f
+                out[2] = params["trailFade"] ?: 0f
+            }
+            "neuralGrid" -> {
+                out[0] = params["neuralDensity"] ?: 0f
+                out[1] = params["neuralSpeed"] ?: 0f
+                out[2] = params["neuralGlow"] ?: 0f
+            }
         }
         val idx = when (id) {
             "kodak" -> 1; "vintage" -> 2; "retro" -> 3; "grain" -> 4; "vhs" -> 5
             "bwGlitch" -> 6; "blur" -> 7; "cinematic" -> 8; "coolBlue" -> 9
-            "dreamGlow" -> 10; else -> 0
+            "dreamGlow" -> 10
+            "cyberpunkHud" -> 11; "hologram" -> 12; "matrixVision" -> 13
+            "neonOutline" -> 14; "thermal" -> 15; "crtRetro" -> 16
+            "vhsPro" -> 17; "kaleidoscope" -> 18; "electricAura" -> 19
+            "scannerVision" -> 20
+            "liquidChrome" -> 21; "glassMorph" -> 22; "prismLens" -> 23
+            "cinematicAnamorphic" -> 24; "dreamLens" -> 25; "aurora" -> 26
+            "lightRays" -> 27; "holographicGlass" -> 28; "photonTrails" -> 29
+            "neuralGrid" -> 30
+            else -> 0
         }
         return idx to out
     }

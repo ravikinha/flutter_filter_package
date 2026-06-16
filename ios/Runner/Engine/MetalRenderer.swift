@@ -114,14 +114,36 @@ final class MetalRenderer: NSObject, FlutterTexture {
 
     func setParam(key: String, value: Float) {
         switch key {
+        // p0
         case "warmth", "sepiaStrength", "rgbOffset", "glitchAmount",
              "blurRadius", "tealStrength", "coolness", "glowIntensity",
-             "grainIntensity":
+             "grainIntensity",
+             "edgeStrength", "holoIntensity", "matrixGreen",
+             "outlineStrength", "heatIntensity", "crtScan", "tapeWear",
+             "kaleidoSegments", "auraIntensity", "scanSpeed",
+             "chromeIntensity", "glassRefraction", "prismStrength",
+             "anamorphicFlare", "dreamLensGlow", "auroraSpeed",
+             "rayIntensity", "holoGlassStrength", "trailLength",
+             "neuralDensity":
             params[0] = value
+        // p1
         case "contrast", "vignetteStrength", "fade", "scanlineIntensity",
-             "distortionAmount", "orangeStrength", "bloomRadius":
+             "distortionAmount", "orangeStrength", "bloomRadius",
+             "cyberScan", "holoScan", "matrixStreak", "neonHue",
+             "crtChroma", "trackingError", "kaleidoRotation",
+             "scannerGlow",
+             "chromeReflection", "glassTransparency", "prismRainbow",
+             "anamorphicBloom", "dreamLensBloom", "auroraStrength",
+             "rayLength", "holoGlassRainbow", "trailBrightness",
+             "neuralSpeed":
             params[1] = value
-        case "saturation", "lightLeakStrength", "noiseIntensity":
+        // p2
+        case "saturation", "lightLeakStrength", "noiseIntensity",
+             "gridIntensity", "crtBarrel", "vhsProScan",
+             "chromeDistortion", "glassEdge", "prismDispersion",
+             "anamorphicGrain", "dreamLensLeak", "auroraGlow",
+             "rayBloom", "holoGlassGlow", "trailFade",
+             "neuralGlow":
             params[2] = value
         default: break
         }
@@ -239,6 +261,26 @@ final class MetalRenderer: NSObject, FlutterTexture {
         case "cinematic": return 8
         case "coolBlue": return 9
         case "dreamGlow": return 10
+        case "cyberpunkHud": return 11
+        case "hologram": return 12
+        case "matrixVision": return 13
+        case "neonOutline": return 14
+        case "thermal": return 15
+        case "crtRetro": return 16
+        case "vhsPro": return 17
+        case "kaleidoscope": return 18
+        case "electricAura": return 19
+        case "scannerVision": return 20
+        case "liquidChrome": return 21
+        case "glassMorph": return 22
+        case "prismLens": return 23
+        case "cinematicAnamorphic": return 24
+        case "dreamLens": return 25
+        case "aurora": return 26
+        case "lightRays": return 27
+        case "holographicGlass": return 28
+        case "photonTrails": return 29
+        case "neuralGrid": return 30
         default: return 0
         }
     }
@@ -278,6 +320,77 @@ final class MetalRenderer: NSObject, FlutterTexture {
         case "dreamGlow":
             params[0] = p["glowIntensity"] ?? 0
             params[1] = p["bloomRadius"] ?? 0
+        case "cyberpunkHud":
+            params[0] = p["edgeStrength"] ?? 0
+            params[1] = p["cyberScan"] ?? 0
+            params[2] = p["gridIntensity"] ?? 0
+        case "hologram":
+            params[0] = p["holoIntensity"] ?? 0
+            params[1] = p["holoScan"] ?? 0
+        case "matrixVision":
+            params[0] = p["matrixGreen"] ?? 0
+            params[1] = p["matrixStreak"] ?? 0
+        case "neonOutline":
+            params[0] = p["outlineStrength"] ?? 0
+            params[1] = p["neonHue"] ?? 0
+        case "thermal":
+            params[0] = p["heatIntensity"] ?? 0
+        case "crtRetro":
+            params[0] = p["crtScan"] ?? 0
+            params[1] = p["crtChroma"] ?? 0
+            params[2] = p["crtBarrel"] ?? 0
+        case "vhsPro":
+            params[0] = p["tapeWear"] ?? 0
+            params[1] = p["trackingError"] ?? 0
+            params[2] = p["vhsProScan"] ?? 0
+        case "kaleidoscope":
+            params[0] = p["kaleidoSegments"] ?? 0
+            params[1] = p["kaleidoRotation"] ?? 0
+        case "electricAura":
+            params[0] = p["auraIntensity"] ?? 0
+        case "scannerVision":
+            params[0] = p["scanSpeed"] ?? 0
+            params[1] = p["scannerGlow"] ?? 0
+        case "liquidChrome":
+            params[0] = p["chromeIntensity"] ?? 0
+            params[1] = p["chromeReflection"] ?? 0
+            params[2] = p["chromeDistortion"] ?? 0
+        case "glassMorph":
+            params[0] = p["glassRefraction"] ?? 0
+            params[1] = p["glassTransparency"] ?? 0
+            params[2] = p["glassEdge"] ?? 0
+        case "prismLens":
+            params[0] = p["prismStrength"] ?? 0
+            params[1] = p["prismRainbow"] ?? 0
+            params[2] = p["prismDispersion"] ?? 0
+        case "cinematicAnamorphic":
+            params[0] = p["anamorphicFlare"] ?? 0
+            params[1] = p["anamorphicBloom"] ?? 0
+            params[2] = p["anamorphicGrain"] ?? 0
+        case "dreamLens":
+            params[0] = p["dreamLensGlow"] ?? 0
+            params[1] = p["dreamLensBloom"] ?? 0
+            params[2] = p["dreamLensLeak"] ?? 0
+        case "aurora":
+            params[0] = p["auroraSpeed"] ?? 0
+            params[1] = p["auroraStrength"] ?? 0
+            params[2] = p["auroraGlow"] ?? 0
+        case "lightRays":
+            params[0] = p["rayIntensity"] ?? 0
+            params[1] = p["rayLength"] ?? 0
+            params[2] = p["rayBloom"] ?? 0
+        case "holographicGlass":
+            params[0] = p["holoGlassStrength"] ?? 0
+            params[1] = p["holoGlassRainbow"] ?? 0
+            params[2] = p["holoGlassGlow"] ?? 0
+        case "photonTrails":
+            params[0] = p["trailLength"] ?? 0
+            params[1] = p["trailBrightness"] ?? 0
+            params[2] = p["trailFade"] ?? 0
+        case "neuralGrid":
+            params[0] = p["neuralDensity"] ?? 0
+            params[1] = p["neuralSpeed"] ?? 0
+            params[2] = p["neuralGlow"] ?? 0
         default: break
         }
     }

@@ -67,8 +67,18 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
     super.dispose();
   }
 
+  // Filters whose visual signature can't be reproduced by a ColorFilter
+  // matrix on a live VideoPlayer — they need a real GPU shader pass per
+  // frame. Picking one of these on a video kicks off processVideo to a
+  // temp file and we play that back.
   static const Set<String> _effectFilters = {
     'blur', 'bwGlitch', 'grain', 'vhs', 'dreamGlow',
+    'cyberpunkHud', 'hologram', 'neonOutline', 'crtRetro',
+    'vhsPro', 'kaleidoscope', 'electricAura', 'scannerVision',
+    // Premium set
+    'liquidChrome', 'glassMorph', 'prismLens', 'cinematicAnamorphic',
+    'dreamLens', 'aurora', 'lightRays', 'holographicGlass',
+    'photonTrails', 'neuralGrid',
   };
 
   Future<void> _pick() async {
@@ -619,6 +629,27 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
           0.95, 1.00, 0.05, 0, 6,
           0.95, 0, 0.90, 0, 8,
           0, 0, 0, 1, 0,
+        ]);
+      case 'thermal':
+        return const ColorFilter.matrix([
+          1.50, 0.20, 0.00, 0, -20,
+          0.50, 0.80, 0.00, 0, -30,
+          -0.20, -0.30, 0.40, 0, 20,
+          0,    0,    0,    1, 0,
+        ]);
+      case 'matrixVision':
+        return const ColorFilter.matrix([
+          0.05, 0.10, 0.00, 0, -10,
+          0.30, 1.20, 0.20, 0, -2,
+          0.05, 0.20, 0.10, 0, -10,
+          0,    0,    0,    1, 0,
+        ]);
+      case 'hologram':
+        return const ColorFilter.matrix([
+          0.10, 0.20, 0.40, 0, -10,
+          0.30, 0.75, 0.60, 0,  4,
+          0.40, 0.80, 1.10, 0, 18,
+          0,    0,    0,    1, 0,
         ]);
       default:
         return const ColorFilter.mode(Colors.transparent, BlendMode.multiply);
