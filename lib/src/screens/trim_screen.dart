@@ -204,7 +204,11 @@ class _TrimScreenState extends State<TrimScreen> {
   }
 }
 
-class _RangeBar extends StatelessWidget {
+/// Single-pan range bar. A bar-wide GestureDetector decides which handle
+/// to move (or whether to scrub the playhead) based on where the pan
+/// started, so nothing gets eaten by the gesture arena the way per-handle
+/// GestureDetectors did on Android.
+class _RangeBar extends StatefulWidget {
   final Duration duration;
   final Duration start;
   final Duration end;
@@ -221,106 +225,161 @@ class _RangeBar extends StatelessWidget {
   });
 
   @override
+  State<_RangeBar> createState() => _RangeBarState();
+}
+
+enum _Drag { startHandle, endHandle, playhead }
+
+class _RangeBarState extends State<_RangeBar> {
+  _Drag? _dragging;
+
+  static const double _handleW = 20;   // bigger touch target
+  static const double _barHeight = 60;
+
+  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (ctx, c) {
       final width = c.maxWidth;
-      const handleW = 14.0;
-      final usable = width - handleW * 2;
+      final usable = width - _handleW * 2;
       double frac(Duration d) =>
-          duration.inMilliseconds == 0 ? 0 :
-          d.inMilliseconds / duration.inMilliseconds;
-      final sx = frac(start) * usable;
-      final ex = frac(end) * usable;
-      final px = frac(playhead) * usable;
+          widget.duration.inMilliseconds == 0
+              ? 0
+              : d.inMilliseconds / widget.duration.inMilliseconds;
+      final sx = frac(widget.start) * usable;
+      final ex = frac(widget.end) * usable;
+      final px = frac(widget.playhead) * usable;
+
+      Duration msAtLocalX(double x) {
+        final t = ((x - _handleW / 2) / usable).clamp(0.0, 1.0);
+        return Duration(milliseconds: (t * widget.duration.inMilliseconds).round());
+      }
+
       return SizedBox(
-        height: 60,
-        child: Stack(children: [
-          Positioned.fill(child: GestureDetector(
-            onTapDown: (d) {
-              final local = (d.localPosition.dx - handleW).clamp(0.0, usable);
-              final ms = (local / usable * duration.inMilliseconds).round();
-              onScrub(Duration(milliseconds: ms));
-            },
-            child: Container(
-              margin: EdgeInsets.symmetric(vertical: 24),
-              decoration: BoxDecoration(
-                color: Colors.white12,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          )),
-          // Selected band
-          Positioned(
-            left: sx + handleW / 2,
-            top: 22,
-            width: math.max(0.0, ex - sx),
-            height: 16,
-            child: Container(color: const Color(0x55FFD400)),
-          ),
-          // Playhead
-          Positioned(
-            left: px + handleW / 2 - 1,
-            top: 14,
-            width: 2, height: 32,
-            child: Container(color: Colors.white),
-          ),
-          // Start handle
-          Positioned(
-            left: sx, top: 12,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onPanUpdate: (d) {
-                final newSx = (sx + d.delta.dx).clamp(0.0, ex - handleW);
-                final newStart = Duration(
-                  milliseconds: (newSx / usable * duration.inMilliseconds).round(),
-                );
-                onChanged(newStart, end);
-              },
+        height: _barHeight,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanDown: (d) {
+            // Decide which thing to drag based on which is closest to the
+            // touch X (with a slight bias toward handles so the playhead
+            // doesn't steal handle hits when they're at the same spot).
+            final x = d.localPosition.dx;
+            final centerStart = sx + _handleW / 2;
+            final centerEnd = ex + _handleW / 2;
+            final centerPlay = px + _handleW / 2;
+            final dStart = (x - centerStart).abs() - 4;   // handle bias
+            final dEnd = (x - centerEnd).abs() - 4;
+            final dPlay = (x - centerPlay).abs();
+            _dragging = (dStart <= dEnd && dStart <= dPlay)
+                ? _Drag.startHandle
+                : (dEnd <= dPlay)
+                    ? _Drag.endHandle
+                    : _Drag.playhead;
+            // Immediate scrub on a tap-to-position.
+            if (_dragging == _Drag.playhead) {
+              widget.onScrub(msAtLocalX(x));
+            }
+          },
+          onPanUpdate: (d) {
+            final pos = msAtLocalX(d.localPosition.dx);
+            switch (_dragging) {
+              case _Drag.startHandle:
+                final maxStart = widget.end - const Duration(milliseconds: 500);
+                final s = pos > maxStart ? maxStart : pos;
+                widget.onChanged(s.isNegative ? Duration.zero : s, widget.end);
+                break;
+              case _Drag.endHandle:
+                final minEnd = widget.start + const Duration(milliseconds: 500);
+                final e = pos < minEnd ? minEnd : pos;
+                widget.onChanged(widget.start,
+                    e > widget.duration ? widget.duration : e);
+                break;
+              case _Drag.playhead:
+                widget.onScrub(pos);
+                break;
+              case null: break;
+            }
+          },
+          onPanEnd: (_) => _dragging = null,
+          onTapDown: (d) {
+            // Pure tap-to-scrub (not on a handle) — same logic but no drag.
+            final x = d.localPosition.dx;
+            final centerStart = sx + _handleW / 2;
+            final centerEnd = ex + _handleW / 2;
+            if ((x - centerStart).abs() > _handleW &&
+                (x - centerEnd).abs() > _handleW) {
+              widget.onScrub(msAtLocalX(x));
+            }
+          },
+          child: Stack(children: [
+            // Track
+            Positioned(
+              left: _handleW / 2, right: _handleW / 2,
+              top: _barHeight / 2 - 2,
+              height: 4,
               child: Container(
-                width: handleW, height: 36,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFFFD400),
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(4),
-                    bottomLeft: Radius.circular(4),
-                  ),
+                decoration: BoxDecoration(
+                  color: Colors.white12,
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                child: const Center(child: Icon(
-                  Icons.chevron_left, size: 14, color: Colors.black,
-                )),
               ),
             ),
-          ),
-          // End handle
-          Positioned(
-            left: ex, top: 12,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onPanUpdate: (d) {
-                final newEx = (ex + d.delta.dx).clamp(sx + handleW, usable);
-                final newEnd = Duration(
-                  milliseconds: (newEx / usable * duration.inMilliseconds).round(),
-                );
-                onChanged(start, newEnd);
-              },
-              child: Container(
-                width: handleW, height: 36,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFFFD400),
-                  borderRadius: BorderRadius.only(
-                    topRight: Radius.circular(4),
-                    bottomRight: Radius.circular(4),
-                  ),
-                ),
-                child: const Center(child: Icon(
-                  Icons.chevron_right, size: 14, color: Colors.black,
-                )),
-              ),
+            // Selected band
+            Positioned(
+              left: sx + _handleW / 2,
+              top: _barHeight / 2 - 8,
+              width: math.max(0.0, ex - sx),
+              height: 16,
+              child: Container(color: const Color(0x55FFD400)),
             ),
-          ),
-        ]),
+            // Playhead
+            Positioned(
+              left: px + _handleW / 2 - 1,
+              top: _barHeight / 2 - 16,
+              width: 2, height: 32,
+              child: Container(color: Colors.white),
+            ),
+            // Start handle (visual only — gestures live on the bar)
+            Positioned(
+              left: sx, top: _barHeight / 2 - 18,
+              child: _HandleVisual(left: true),
+            ),
+            // End handle
+            Positioned(
+              left: ex, top: _barHeight / 2 - 18,
+              child: _HandleVisual(left: false),
+            ),
+          ]),
+        ),
       );
     });
+  }
+}
+
+class _HandleVisual extends StatelessWidget {
+  final bool left;
+  const _HandleVisual({required this.left});
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        width: _RangeBarState._handleW, height: 36,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFD400),
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(left ? 4 : 0),
+            bottomLeft: Radius.circular(left ? 4 : 0),
+            topRight: Radius.circular(left ? 0 : 4),
+            bottomRight: Radius.circular(left ? 0 : 4),
+          ),
+        ),
+        child: Center(
+          child: Icon(
+            left ? Icons.chevron_left : Icons.chevron_right,
+            size: 16, color: Colors.black,
+          ),
+        ),
+      ),
+    );
   }
 }
 

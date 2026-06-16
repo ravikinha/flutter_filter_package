@@ -10,5 +10,8 @@ out vec2 vOvTex;
 void main() {
     gl_Position = aPosition;
     vSrcTex = (uTexMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;
-    vOvTex = aTexCoord;
+    // Overlay PNG is image-Y-down but the encoder Surface reads GL's Y-up
+    // framebuffer; flip Y so the overlay's top-left lands on the encoded
+    // video's top-left.
+    vOvTex = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
 }

@@ -226,16 +226,19 @@ object MediaProcessor {
         File(outputPath).parentFile?.mkdirs()
         File(outputPath).takeIf { it.exists() }?.delete()
 
-        // Probe.
+        // Probe — capture both formats here so the muxer's addTrack() pre-start
+        // gets the right one (and not the wrong-track format from a fresh
+        // extractor's getTrackFormat(0) lookup).
         val probe = MediaExtractor().apply { setDataSource(inputPath) }
         var videoIdx = -1
         var audioIdx = -1
         var videoFormat: MediaFormat? = null
+        var audioFormat: MediaFormat? = null
         for (i in 0 until probe.trackCount) {
             val f = probe.getTrackFormat(i)
             val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
             if (videoIdx < 0 && mime.startsWith("video/")) { videoIdx = i; videoFormat = f }
-            else if (audioIdx < 0 && mime.startsWith("audio/")) { audioIdx = i }
+            else if (audioIdx < 0 && mime.startsWith("audio/")) { audioIdx = i; audioFormat = f }
         }
         val vf = videoFormat ?: throw IllegalArgumentException("no video track")
         val sourceW = vf.getInteger(MediaFormat.KEY_WIDTH)
@@ -320,12 +323,6 @@ object MediaProcessor {
         val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         var videoMuxIdx = -1
         var audioMuxIdx = -1
-        var audioFormatStash: MediaFormat? = null
-        if (audioIdx >= 0) {
-            val ax = MediaExtractor().apply { setDataSource(inputPath); selectTrack(audioIdx) }
-            audioFormatStash = ax.getTrackFormat(0)
-            ax.release()
-        }
         var muxerStarted = false
 
         // Build a UV-rotation matrix that takes (u,v) ∈ [0,1]² to the
@@ -407,7 +404,11 @@ object MediaProcessor {
                                 GLES30.glEnableVertexAttribArray(aPos)
                                 GLES30.glVertexAttribPointer(aPos, 2, GLES30.GL_FLOAT, false, 0, FSQ_POS)
                                 GLES30.glEnableVertexAttribArray(aTex)
-                                GLES30.glVertexAttribPointer(aTex, 2, GLES30.GL_FLOAT, false, 0, FSQ_TEX_FLIPY)
+                                // FSQ_TEX (not FSQ_TEX_FLIPY) — the encoder's
+                                // Surface uses the same Y orientation as
+                                // OpenGL's framebuffer; flipping here makes
+                                // the output upside-down.
+                                GLES30.glVertexAttribPointer(aTex, 2, GLES30.GL_FLOAT, false, 0, FSQ_TEX)
                                 GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
                                 egl.setPresentationTime(bi.presentationTimeUs * 1000)
@@ -427,7 +428,7 @@ object MediaProcessor {
                         outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             check(!muxerStarted) { "format changed twice" }
                             videoMuxIdx = muxer.addTrack(encoder.outputFormat)
-                            audioFormatStash?.let { audioMuxIdx = muxer.addTrack(it) }
+                            audioFormat?.let { audioMuxIdx = muxer.addTrack(it) }
                             muxer.start()
                             muxerStarted = true
                         }
@@ -498,17 +499,16 @@ object MediaProcessor {
         var videoIdx = -1
         var audioIdx = -1
         var videoFormat: MediaFormat? = null
+        var audioFormat: MediaFormat? = null
         for (i in 0 until probe.trackCount) {
             val f = probe.getTrackFormat(i)
             val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
             if (videoIdx < 0 && mime.startsWith("video/")) { videoIdx = i; videoFormat = f }
-            else if (audioIdx < 0 && mime.startsWith("audio/")) { audioIdx = i }
+            else if (audioIdx < 0 && mime.startsWith("audio/")) { audioIdx = i; audioFormat = f }
         }
         val vf = videoFormat ?: throw IllegalArgumentException("no video track")
         val sourceW = vf.getInteger(MediaFormat.KEY_WIDTH)
         val sourceH = vf.getInteger(MediaFormat.KEY_HEIGHT)
-        val durationUs = if (vf.containsKey(MediaFormat.KEY_DURATION))
-            vf.getLong(MediaFormat.KEY_DURATION) else 1L
         val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
                             vf.containsKey(MediaFormat.KEY_ROTATION)) {
             vf.getInteger(MediaFormat.KEY_ROTATION)
@@ -558,14 +558,17 @@ object MediaProcessor {
             }
         }
 
-        // Use the live-camera OES shader (filter.frag) with filter index 0
-        // (none). The crop rect is folded into the SurfaceTexture transform
-        // matrix; flips are applied by additional scale/translate.
+        // Minimal OES pass-through shader. We deliberately avoid filter.frag
+        // here so we don't drag in its sampler3D LUT (which on some Adreno
+        // drivers requires a bound 3D texture or it outputs green/undefined).
         val program = ShaderManager.buildProgram(
             ShaderManager.readAsset(ctx, "shaders/oes.vert"),
-            ShaderManager.readAsset(ctx, "shaders/filter.frag"),
+            ShaderManager.readAsset(ctx, "shaders/passthrough.frag"),
         )
-        val locs = ProgramLocs(program, hasTexMatrix = true)
+        val aPos = GLES30.glGetAttribLocation(program, "aPosition")
+        val aTex = GLES30.glGetAttribLocation(program, "aTexCoord")
+        val uTex = GLES30.glGetUniformLocation(program, "uTex")
+        val uTexMatrix = GLES30.glGetUniformLocation(program, "uTexMatrix")
 
         // Decoder.
         val extractor = MediaExtractor().apply {
@@ -580,12 +583,6 @@ object MediaProcessor {
         if (rotation != 0) muxer.setOrientationHint(rotation)
         var videoMuxIdx = -1
         var audioMuxIdx = -1
-        var audioFormatStash: MediaFormat? = null
-        if (audioIdx >= 0) {
-            val ax = MediaExtractor().apply { setDataSource(inputPath); selectTrack(audioIdx) }
-            audioFormatStash = ax.getTrackFormat(0)
-            ax.release()
-        }
         var muxerStarted = false
 
         // Pre-build crop+flip texture matrix factors. Each frame multiplies
@@ -647,11 +644,19 @@ object MediaProcessor {
                                 val tmp = FloatArray(16)
                                 android.opengl.Matrix.multiplyMM(tmp, 0, texMatrix, 0, cropMatrix, 0)
                                 System.arraycopy(tmp, 0, texMatrix, 0, 16)
-                                drawFrame(program, locs, oesTex, 0,
-                                    outW, outH,
-                                    timeSec = (System.nanoTime() - startNanos) / 1e9f,
-                                    filterId = "none", params = null,
-                                    texMatrix = texMatrix)
+                                GLES30.glViewport(0, 0, outW, outH)
+                                GLES30.glClearColor(0f, 0f, 0f, 1f)
+                                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                                GLES30.glUseProgram(program)
+                                GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+                                GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTex)
+                                GLES30.glUniform1i(uTex, 0)
+                                GLES30.glUniformMatrix4fv(uTexMatrix, 1, false, texMatrix, 0)
+                                GLES30.glEnableVertexAttribArray(aPos)
+                                GLES30.glVertexAttribPointer(aPos, 2, GLES30.GL_FLOAT, false, 0, FSQ_POS)
+                                GLES30.glEnableVertexAttribArray(aTex)
+                                GLES30.glVertexAttribPointer(aTex, 2, GLES30.GL_FLOAT, false, 0, FSQ_TEX)
+                                GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
                                 egl.setPresentationTime(bi.presentationTimeUs * 1000)
                                 egl.swapBuffers()
                             }
@@ -669,7 +674,7 @@ object MediaProcessor {
                         outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             check(!muxerStarted) { "format changed twice" }
                             videoMuxIdx = muxer.addTrack(encoder.outputFormat)
-                            audioFormatStash?.let { audioMuxIdx = muxer.addTrack(it) }
+                            audioFormat?.let { audioMuxIdx = muxer.addTrack(it) }
                             muxer.start()
                             muxerStarted = true
                         }
@@ -738,6 +743,8 @@ object MediaProcessor {
         val probe = MediaExtractor().apply { setDataSource(inputPath) }
         var videoSrcIdx = -1
         var audioSrcIdx = -1
+        var videoFormat: MediaFormat? = null
+        var audioFormat: MediaFormat? = null
         var rotation = 0
         var maxInput = 1024 * 1024
         for (i in 0 until probe.trackCount) {
@@ -745,35 +752,41 @@ object MediaProcessor {
             val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
             if (videoSrcIdx < 0 && mime.startsWith("video/")) {
                 videoSrcIdx = i
+                videoFormat = f
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
                     f.containsKey(MediaFormat.KEY_ROTATION)) {
                     rotation = f.getInteger(MediaFormat.KEY_ROTATION)
                 }
             } else if (audioSrcIdx < 0 && mime.startsWith("audio/")) {
                 audioSrcIdx = i
+                audioFormat = f
             }
             if (f.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
                 maxInput = maxOf(maxInput, f.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
             }
         }
         probe.release()
-        if (videoSrcIdx < 0) throw IllegalArgumentException("no video track")
+        val vf = videoFormat ?: throw IllegalArgumentException("no video track")
 
         val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         if (rotation != 0) muxer.setOrientationHint(rotation)
 
-        // Add tracks BEFORE starting the muxer.
+        // Register both tracks with the muxer BEFORE start(), using the
+        // formats captured during the probe (NOT extractor.getTrackFormat(0)
+        // — that returns whatever's at global index 0, which is usually the
+        // video track, so audio would silently get a video format and play
+        // back as nothing).
         val videoExtractor = MediaExtractor().apply {
             setDataSource(inputPath); selectTrack(videoSrcIdx)
         }
-        val videoMuxIdx = muxer.addTrack(videoExtractor.getTrackFormat(0))
+        val videoMuxIdx = muxer.addTrack(vf)
         var audioExtractor: MediaExtractor? = null
         var audioMuxIdx = -1
-        if (audioSrcIdx >= 0) {
+        if (audioSrcIdx >= 0 && audioFormat != null) {
             audioExtractor = MediaExtractor().apply {
                 setDataSource(inputPath); selectTrack(audioSrcIdx)
             }
-            audioMuxIdx = muxer.addTrack(audioExtractor.getTrackFormat(0))
+            audioMuxIdx = muxer.addTrack(audioFormat)
         }
         muxer.start()
 
