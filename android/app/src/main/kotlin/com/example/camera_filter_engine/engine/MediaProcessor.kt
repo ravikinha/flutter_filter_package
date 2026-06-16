@@ -253,19 +253,17 @@ object MediaProcessor {
         } else 0
         probeEx.release()
 
-        // Don't transform orientation at all. Encode at the source's raw
-        // buffer size and carry its rotation flag straight through to the
-        // output file (see muxer.setOrientationHint below). This is how the
-        // stock Android camera app records video — landscape buffer with a
-        // rotation hint that the player applies on playback — and means the
-        // filter's job is purely "apply pixels", never "rotate pixels".
+        // Encode at source dimensions, full bitrate. Never compromise quality
+        // anywhere — even the in-screen preview render is the same file you'd
+        // get from Apply, so Apply can just hand back the cached preview.
         val outW = sourceW
         val outH = sourceH
+        val targetBitrate = 8_000_000
 
         // Encoder + input Surface
         val outFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, outW, outH).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, 8_000_000)
+            setInteger(MediaFormat.KEY_BIT_RATE, targetBitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, 30)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
@@ -328,6 +326,7 @@ object MediaProcessor {
         val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         if (rotation != 0) muxer.setOrientationHint(rotation)
         var videoMuxIdx = -1
+        var audioMuxIdx = -1
         var muxerStarted = false
 
         var inputDone = false
@@ -402,6 +401,12 @@ object MediaProcessor {
                         outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             check(!muxerStarted) { "format changed twice" }
                             videoMuxIdx = muxer.addTrack(encoder.outputFormat)
+                            // ALL tracks must be added before muxer.start().
+                            // Register the source audio's format here so the
+                            // passthrough pass below has a track to write to.
+                            if (audioIdx >= 0 && audioFormat != null) {
+                                audioMuxIdx = muxer.addTrack(audioFormat!!)
+                            }
                             muxer.start()
                             muxerStarted = true
                         }
@@ -434,8 +439,8 @@ object MediaProcessor {
             // Skip audio passthrough on cancel — the muxer's video track is
             // mid-stream and writing more samples now would just produce a
             // larger broken file we're about to delete.
-            if (!wasCancelled && muxerStarted && audioIdx >= 0 && audioFormat != null) {
-                try { passthroughAudio(inputPath, audioIdx, audioFormat!!, muxer) }
+            if (!wasCancelled && muxerStarted && audioMuxIdx >= 0) {
+                try { passthroughAudio(inputPath, audioIdx, audioMuxIdx, muxer) }
                 catch (t: Throwable) { Log.w(TAG, "audio passthrough failed", t) }
             }
 
@@ -459,10 +464,16 @@ object MediaProcessor {
         return outputPath
     }
 
+    /**
+     * Copy the source's audio samples straight through to the already-started
+     * muxer. The audio track must have been added to [muxer] before
+     * `muxer.start()`; this function only writes sample data, never calls
+     * addTrack (which would throw on a running muxer and silently drop audio).
+     */
     private fun passthroughAudio(
         inputPath: String,
         audioIdx: Int,
-        audioFormat: MediaFormat,
+        audioMuxIdx: Int,
         muxer: MediaMuxer,
     ) {
         val ex = MediaExtractor().apply {
@@ -470,7 +481,7 @@ object MediaProcessor {
             selectTrack(audioIdx)
         }
         try {
-            val muxAudio = muxer.addTrack(audioFormat)
+            val audioFormat = ex.getTrackFormat(audioIdx)
             val bufSize = if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE))
                 audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
             else 256 * 1024
@@ -484,7 +495,7 @@ object MediaProcessor {
                 bi.size = sz
                 bi.presentationTimeUs = ex.sampleTime
                 bi.flags = ex.sampleFlags
-                muxer.writeSampleData(muxAudio, buf, bi)
+                muxer.writeSampleData(audioMuxIdx, buf, bi)
                 ex.advance()
             }
         } finally {

@@ -261,8 +261,9 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
           _videoPreviewPath != null &&
           _videoPreviewKey == sig &&
           File(_videoPreviewPath!).existsSync()) {
-        // Already rendered for the preview — just copy the cached file
-        // instead of re-encoding. Instant Apply.
+        // The auto-preview render is full quality and already exists for
+        // this exact filter + params selection. Copy it instead of
+        // re-rendering — saves the full processVideo run on Apply.
         await File(_videoPreviewPath!).copy(outPath);
         saved = outPath;
       } else if (_isVideo) {
@@ -496,6 +497,9 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final outPath = '${dir.path}/CFE_vpreview_$seq.mp4';
+      // Render at full quality — this is also what Apply will save, so the
+      // user gets to assess the exact final result, and Apply is instant
+      // because it just copies this cached file.
       final r = await FilterEngine.instance.processVideo(
         inputPath: _source!.path,
         outputPath: outPath,

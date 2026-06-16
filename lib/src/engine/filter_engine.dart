@@ -129,6 +129,7 @@ class FilterEngine {
       _method.invokeMethod('cancelProcessing');
 
   /// Apply a filter to an existing video file (audio is passed through).
+  /// Always renders at the source's full resolution and bitrate.
   Future<String> processVideo({
     required String inputPath,
     required String outputPath,

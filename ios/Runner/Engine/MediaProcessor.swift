@@ -226,6 +226,7 @@ enum MediaProcessor {
         let rotatedSize = natural.applying(xf)
         let outW = Int(abs(rotatedSize.width).rounded())
         let outH = Int(abs(rotatedSize.height).rounded())
+        let targetBitrate: Int = 8_000_000
 
         // Reader
         let reader = try AVAssetReader(asset: asset)
@@ -259,7 +260,7 @@ enum MediaProcessor {
             AVVideoWidthKey: outW,
             AVVideoHeightKey: outH,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 8_000_000,
+                AVVideoAverageBitRateKey: targetBitrate,
                 AVVideoMaxKeyFrameIntervalKey: 60,
             ],
         ]
