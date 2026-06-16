@@ -482,6 +482,41 @@ inline float3 fNeuralGrid(float3 c, float2 uv, texture2d<float> tex, sampler s,
     return saturate(col);
 }
 
+inline float3 fDogpatchPro(float3 c, float2 uv, texture2d<float> tex, sampler s,
+                           float2 res, float t, float p0, float p1, float p2) {
+    float warmth = p0;
+    float bloomAmt = p1;
+    float texAmt = p2;
+    // 1) warm Kodak grade
+    c.r = saturate(c.r + 0.06 * warmth);
+    c.g = saturate(c.g + 0.025 * warmth);
+    c.b = saturate(c.b - 0.04 * warmth);
+    c = saturate((c - 0.5) * (1.0 + 0.18 * warmth) + 0.5);
+    float l1 = dot(c, float3(0.299, 0.587, 0.114));
+    c = mix(float3(l1), c, 1.0 - 0.10 * warmth);
+    c.r = saturate(c.r * (1.0 + 0.04 * warmth));
+    c.g = saturate(c.g * (1.0 - 0.02 * warmth));
+    c.b *= mix(1.0, 0.92, warmth * (1.0 - l1));
+    // 2) golden highlights
+    float lum = dot(c, float3(0.299, 0.587, 0.114));
+    float hi = smoothstep(0.65, 1.0, lum);
+    c.r = saturate(c.r + 0.14 * hi * warmth);
+    c.g = saturate(c.g + 0.11 * hi * warmth);
+    c.b = saturate(c.b - 0.07 * hi * warmth);
+    // 3) bloom
+    float3 blurred = blur5(tex, s, uv, res, mix(3.0, 10.0, bloomAmt));
+    float3 bright = max(blurred - 0.55, float3(0.0));
+    c += bright * bloomAmt * 1.20;
+    // 4) film grain (slow refresh)
+    float n = hash21(uv * res + floor(t * 6.0)) - 0.5;
+    c += n * texAmt * 0.08;
+    // 5) soft vignette
+    float2 vUv = uv - 0.5;
+    float vig = smoothstep(0.95, 0.30, length(vUv) * 1.15);
+    c *= mix(1.0, vig, texAmt * 0.45);
+    return saturate(c);
+}
+
 fragment float4 filter_fs(VSOut in [[stage_in]],
                           texture2d<float> srcTex [[texture(0)]],
                           texture3d<float> lutTex [[texture(1)]],
@@ -530,6 +565,7 @@ fragment float4 filter_fs(VSOut in [[stage_in]],
         case 28: col = fHolographicGlass(src, uv, srcTex, texSampler, U.resolution, U.time, U.p0, U.p1, U.p2); break;
         case 29: col = fPhotonTrails(src, uv, srcTex, texSampler, U.time, U.p0, U.p1, U.p2); break;
         case 30: col = fNeuralGrid(src, uv, srcTex, texSampler, U.resolution, U.time, U.p0, U.p1, U.p2); break;
+        case 31: col = fDogpatchPro(src, uv, srcTex, texSampler, U.resolution, U.time, U.p0, U.p1, U.p2); break;
         default: col = src; break;
     }
 

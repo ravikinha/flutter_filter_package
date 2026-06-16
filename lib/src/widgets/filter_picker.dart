@@ -381,6 +381,15 @@ ColorFilter _matrixFor(String id) {
         0.10, 0.40, 0.30, 0, -4,
         0,    0,    0,    1, 0,
       ]);
+    case 'dogpatchPro':
+      // Warm Kodak grade approximation: lift R, slight G, drop B, golden
+      // highlights, +contrast. Mirrors the shader at default params.
+      return const ColorFilter.matrix([
+        1.18, 0.05, 0.00, 0, 14,
+        0.00, 1.10, 0.00, 0,  6,
+        -0.05, 0.00, 0.92, 0, -8,
+        0,    0,    0,    1, 0,
+      ]);
     case 'blur':
     case 'dreamGlow':
     case 'vhs':
@@ -491,6 +500,10 @@ Widget? _overlayIconFor(String id) {
     case 'neuralGrid':
       icon = Icons.developer_board;
       color = const Color(0xFF00E676);
+      break;
+    case 'dogpatchPro':
+      icon = Icons.wb_iridescent;
+      color = const Color(0xFFFFD27A);
       break;
   }
   if (icon == null) return null;

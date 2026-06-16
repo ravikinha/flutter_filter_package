@@ -124,7 +124,8 @@ final class MetalRenderer: NSObject, FlutterTexture {
              "chromeIntensity", "glassRefraction", "prismStrength",
              "anamorphicFlare", "dreamLensGlow", "auroraSpeed",
              "rayIntensity", "holoGlassStrength", "trailLength",
-             "neuralDensity":
+             "neuralDensity",
+             "dogpatchWarmth":
             params[0] = value
         // p1
         case "contrast", "vignetteStrength", "fade", "scanlineIntensity",
@@ -135,7 +136,8 @@ final class MetalRenderer: NSObject, FlutterTexture {
              "chromeReflection", "glassTransparency", "prismRainbow",
              "anamorphicBloom", "dreamLensBloom", "auroraStrength",
              "rayLength", "holoGlassRainbow", "trailBrightness",
-             "neuralSpeed":
+             "neuralSpeed",
+             "dogpatchBloom":
             params[1] = value
         // p2
         case "saturation", "lightLeakStrength", "noiseIntensity",
@@ -143,7 +145,8 @@ final class MetalRenderer: NSObject, FlutterTexture {
              "chromeDistortion", "glassEdge", "prismDispersion",
              "anamorphicGrain", "dreamLensLeak", "auroraGlow",
              "rayBloom", "holoGlassGlow", "trailFade",
-             "neuralGlow":
+             "neuralGlow",
+             "dogpatchTexture":
             params[2] = value
         default: break
         }
@@ -281,6 +284,7 @@ final class MetalRenderer: NSObject, FlutterTexture {
         case "holographicGlass": return 28
         case "photonTrails": return 29
         case "neuralGrid": return 30
+        case "dogpatchPro": return 31
         default: return 0
         }
     }
@@ -391,6 +395,10 @@ final class MetalRenderer: NSObject, FlutterTexture {
             params[0] = p["neuralDensity"] ?? 0
             params[1] = p["neuralSpeed"] ?? 0
             params[2] = p["neuralGlow"] ?? 0
+        case "dogpatchPro":
+            params[0] = p["dogpatchWarmth"] ?? 0
+            params[1] = p["dogpatchBloom"] ?? 0
+            params[2] = p["dogpatchTexture"] ?? 0
         default: break
         }
     }

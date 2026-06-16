@@ -565,6 +565,57 @@ vec3 fNeuralGrid(vec3 c, vec2 uv) {
     return clamp(col, 0.0, 1.0);
 }
 
+// Dogpatch Pro — 5-pass premium film grade fused into one shader pass.
+//   1) Warm Kodak grade  (temp +12, tint +3, contrast +15%, sat -5%)
+//   2) Golden highlights (bright pixels >0.65 luma get a warm push)
+//   3) Bloom             (soft halo around brights)
+//   4) Film grain        (slow-moving procedural noise, ~3%)
+//   5) Soft vignette     (gentle, feathered, never crushed corners)
+// uP0 = warmth strength, uP1 = bloom, uP2 = film texture (grain + vignette).
+vec3 fDogpatchPro(vec3 c, vec2 uv) {
+    float warmth = uP0;
+    float bloomAmt = uP1;
+    float tex = uP2;
+
+    // --- Pass 1: warm Kodak grade ----------------------------------------
+    c.r = clamp(c.r + 0.06 * warmth, 0.0, 1.0);
+    c.g = clamp(c.g + 0.025 * warmth, 0.0, 1.0);
+    c.b = clamp(c.b - 0.04 * warmth, 0.0, 1.0);
+    // Contrast +15%.
+    c = clamp((c - 0.5) * (1.0 + 0.18 * warmth) + 0.5, 0.0, 1.0);
+    // Slight desat (-5% to -10% at full warmth).
+    float l1 = dot(c, vec3(0.299, 0.587, 0.114));
+    c = mix(vec3(l1), c, 1.0 - 0.10 * warmth);
+    // Color curves: red up a hair, green down a hair, blue reduced in shadows.
+    c.r = clamp(c.r * (1.0 + 0.04 * warmth), 0.0, 1.0);
+    c.g = clamp(c.g * (1.0 - 0.02 * warmth), 0.0, 1.0);
+    c.b *= mix(1.0, 0.92, warmth * (1.0 - l1));
+
+    // --- Pass 2: golden highlights ---------------------------------------
+    float lum = dot(c, vec3(0.299, 0.587, 0.114));
+    float hi = smoothstep(0.65, 1.0, lum);
+    c.r = clamp(c.r + 0.14 * hi * warmth, 0.0, 1.0);
+    c.g = clamp(c.g + 0.11 * hi * warmth, 0.0, 1.0);
+    c.b = clamp(c.b - 0.07 * hi * warmth, 0.0, 1.0);
+
+    // --- Pass 3: bloom ---------------------------------------------------
+    vec3 blurred = sampleBlur(uv, mix(3.0, 10.0, bloomAmt));
+    vec3 bright = max(blurred - 0.55, vec3(0.0));
+    c += bright * bloomAmt * 1.20;
+
+    // --- Pass 4: film grain ----------------------------------------------
+    // floor(time * 6) gives ~6 grain refreshes per second — slow, organic.
+    float n = hash(uv * uResolution + floor(uTime * 6.0)) - 0.5;
+    c += n * tex * 0.08;
+
+    // --- Pass 5: soft vignette -------------------------------------------
+    vec2 vUv = uv - 0.5;
+    float vigShape = smoothstep(0.95, 0.30, length(vUv) * 1.15);
+    c *= mix(1.0, vigShape, tex * 0.45);
+
+    return clamp(c, 0.0, 1.0);
+}
+
 // ------------------------------------------------------------------------
 void main() {
     vec3 src = texture(uTex, vTex).rgb;
@@ -600,6 +651,7 @@ void main() {
     else if (uFilter == 28) col = fHolographicGlass(src, vTex);
     else if (uFilter == 29) col = fPhotonTrails(src, vTex);
     else if (uFilter == 30) col = fNeuralGrid(src, vTex);
+    else if (uFilter == 31) col = fDogpatchPro(src, vTex);
 
     col = applyLut(col);
     fragColor = vec4(col, 1.0);

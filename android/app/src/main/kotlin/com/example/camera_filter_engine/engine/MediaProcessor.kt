@@ -160,6 +160,673 @@ object MediaProcessor {
         } catch (_: Throwable) { bmp }
     }
 
+    // ---------------- CROP (image, EXIF-aware) ---------------------------
+
+    /**
+     * Crop the image at [inputPath] to the rect defined by normalized
+     * coordinates ([left]..[right], [top]..[bottom]) each in 0..1 of the
+     * EXIF-uprighted image, then optionally flip [flipH] horizontally or
+     * [flipV] vertically. Writes JPEG to [outputPath].
+     */
+    fun cropImage(
+        ctx: Context,
+        inputPath: String,
+        outputPath: String,
+        left: Double, top: Double, right: Double, bottom: Double,
+        flipH: Boolean = false,
+        flipV: Boolean = false,
+    ): String {
+        val raw = BitmapFactory.decodeFile(inputPath)
+            ?: throw IllegalArgumentException("cannot decode $inputPath")
+        val bmp = applyExifOrientation(inputPath, raw)
+        val w = bmp.width
+        val h = bmp.height
+        val l = (left  * w).toInt().coerceIn(0, w - 1)
+        val t = (top   * h).toInt().coerceIn(0, h - 1)
+        val r = (right * w).toInt().coerceIn(l + 1, w)
+        val b = (bottom * h).toInt().coerceIn(t + 1, h)
+        val cw = r - l
+        val ch = b - t
+        var current: Bitmap = Bitmap.createBitmap(bmp, l, t, cw, ch)
+        if (bmp !== current) bmp.recycle()
+        if (flipH || flipV) {
+            val m = Matrix().apply {
+                postScale(if (flipH) -1f else 1f, if (flipV) -1f else 1f)
+            }
+            val flipped = Bitmap.createBitmap(current, 0, 0, current.width, current.height, m, true)
+            current.recycle()
+            current = flipped
+        }
+        File(outputPath).parentFile?.mkdirs()
+        FileOutputStream(outputPath).use { os ->
+            current.compress(Bitmap.CompressFormat.JPEG, 95, os)
+        }
+        current.recycle()
+        return outputPath
+    }
+
+    // ---------------- COMPOSE (overlay PNG over every frame) -------------
+
+    /**
+     * Composite a transparent PNG overlay onto every video frame and re-encode.
+     * Output is at the source's *display* dimensions (post-rotation), with the
+     * source's rotation baked into pixels via a shader UV transform, and the
+     * orientation hint left at 0 — so the overlay PNG can be authored at
+     * display size and sampled 1:1 over each composed frame regardless of how
+     * the source was stored on disk.
+     * Audio is copied through bit-identical.
+     */
+    fun composeVideo(
+        ctx: Context,
+        inputPath: String,
+        outputPath: String,
+        overlayPngPath: String,
+        cancel: AtomicBoolean = AtomicBoolean(false),
+    ): String {
+        File(outputPath).parentFile?.mkdirs()
+        File(outputPath).takeIf { it.exists() }?.delete()
+
+        // Probe.
+        val probe = MediaExtractor().apply { setDataSource(inputPath) }
+        var videoIdx = -1
+        var audioIdx = -1
+        var videoFormat: MediaFormat? = null
+        for (i in 0 until probe.trackCount) {
+            val f = probe.getTrackFormat(i)
+            val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
+            if (videoIdx < 0 && mime.startsWith("video/")) { videoIdx = i; videoFormat = f }
+            else if (audioIdx < 0 && mime.startsWith("audio/")) { audioIdx = i }
+        }
+        val vf = videoFormat ?: throw IllegalArgumentException("no video track")
+        val sourceW = vf.getInteger(MediaFormat.KEY_WIDTH)
+        val sourceH = vf.getInteger(MediaFormat.KEY_HEIGHT)
+        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                            vf.containsKey(MediaFormat.KEY_ROTATION)) {
+            vf.getInteger(MediaFormat.KEY_ROTATION)
+        } else 0
+        probe.release()
+
+        // Output dimensions = display dimensions (rotate-swap if needed).
+        val outW: Int; val outH: Int
+        if (rotation == 90 || rotation == 270) { outW = sourceH; outH = sourceW }
+        else { outW = sourceW; outH = sourceH }
+
+        // Encoder + input Surface.
+        val outFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, outW, outH).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            setInteger(MediaFormat.KEY_BIT_RATE, 8_000_000)
+            setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+        }
+        val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        encoder.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        val encoderInputSurface = encoder.createInputSurface()
+        encoder.start()
+
+        val egl = EglWindow(encoderInputSurface, recordable = true)
+        egl.makeCurrent()
+
+        // OES camera tex + SurfaceTexture for decoder output.
+        val oesTex = IntArray(1).also { GLES30.glGenTextures(1, it, 0) }[0]
+        GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTex)
+        GLES30.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR.toFloat())
+        GLES30.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR.toFloat())
+        GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        val surfaceTexture = SurfaceTexture(oesTex).apply { setDefaultBufferSize(sourceW, sourceH) }
+        val decoderOutputSurface = Surface(surfaceTexture)
+        val frameAvailable = AtomicBoolean(false)
+        val frameLock = Object()
+        surfaceTexture.setOnFrameAvailableListener {
+            synchronized(frameLock) {
+                frameAvailable.set(true)
+                frameLock.notifyAll()
+            }
+        }
+
+        // Overlay 2D texture from PNG (premultiplied alpha so the shader can
+        // do a clean source-over composite).
+        val overlayBmp = BitmapFactory.decodeFile(overlayPngPath)
+            ?: throw IllegalArgumentException("cannot decode overlay")
+        val overlayTex = IntArray(1).also { GLES30.glGenTextures(1, it, 0) }[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, overlayTex)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, overlayBmp, 0)
+        overlayBmp.recycle()
+
+        // Compose shader program (OES camera + 2D overlay).
+        val program = ShaderManager.buildProgram(
+            ShaderManager.readAsset(ctx, "shaders/compose.vert"),
+            ShaderManager.readAsset(ctx, "shaders/compose.frag"),
+        )
+        val aPos = GLES30.glGetAttribLocation(program, "aPosition")
+        val aTex = GLES30.glGetAttribLocation(program, "aTexCoord")
+        val uTex = GLES30.glGetUniformLocation(program, "uTex")
+        val uOverlay = GLES30.glGetUniformLocation(program, "uOverlay")
+        val uTexMatrix = GLES30.glGetUniformLocation(program, "uTexMatrix")
+
+        // Decoder.
+        val extractor = MediaExtractor().apply {
+            setDataSource(inputPath); selectTrack(videoIdx)
+        }
+        val decoder = MediaCodec.createDecoderByType(vf.getString(MediaFormat.KEY_MIME)!!)
+        decoder.configure(vf, decoderOutputSurface, null, 0)
+        decoder.start()
+
+        // Muxer — output is in display orientation already, hint stays 0.
+        val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        var videoMuxIdx = -1
+        var audioMuxIdx = -1
+        var audioFormatStash: MediaFormat? = null
+        if (audioIdx >= 0) {
+            val ax = MediaExtractor().apply { setDataSource(inputPath); selectTrack(audioIdx) }
+            audioFormatStash = ax.getTrackFormat(0)
+            ax.release()
+        }
+        var muxerStarted = false
+
+        // Build a UV-rotation matrix that takes (u,v) ∈ [0,1]² to the
+        // source-texture UV needed to display the source upright. Matches the
+        // formulas from the standalone cropVideo work:
+        //   90° CW : src = (1-v, u)  → matrix-form below
+        //   180°   : src = (1-u, 1-v)
+        //   270° CW: src = (v, 1-u)
+        val rotMatrix = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
+        when (rotation) {
+            90 -> {
+                rotMatrix[0] = 0f; rotMatrix[1] = 1f
+                rotMatrix[4] = -1f; rotMatrix[5] = 0f
+                rotMatrix[12] = 1f; rotMatrix[13] = 0f
+            }
+            180 -> {
+                rotMatrix[0] = -1f; rotMatrix[5] = -1f
+                rotMatrix[12] = 1f; rotMatrix[13] = 1f
+            }
+            270 -> {
+                rotMatrix[0] = 0f; rotMatrix[1] = -1f
+                rotMatrix[4] = 1f; rotMatrix[5] = 0f
+                rotMatrix[12] = 0f; rotMatrix[13] = 1f
+            }
+        }
+
+        var inputDone = false
+        var encodeDone = false
+        val bi = MediaCodec.BufferInfo()
+        val texMatrix = FloatArray(16)
+        val composedMatrix = FloatArray(16)
+
+        try {
+            while (!encodeDone) {
+                if (cancel.get()) throw CancelledException()
+                if (!inputDone) {
+                    val inIdx = decoder.dequeueInputBuffer(10_000L)
+                    if (inIdx >= 0) {
+                        val inBuf = decoder.getInputBuffer(inIdx)!!
+                        val sz = extractor.readSampleData(inBuf, 0)
+                        if (sz < 0) {
+                            decoder.queueInputBuffer(inIdx, 0, 0, 0,
+                                MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            decoder.queueInputBuffer(inIdx, 0, sz, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+                drainDec@ while (true) {
+                    val outIdx = decoder.dequeueOutputBuffer(bi, 10_000L)
+                    when {
+                        outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break@drainDec
+                        outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> continue@drainDec
+                        outIdx >= 0 -> {
+                            val render = bi.size != 0
+                            decoder.releaseOutputBuffer(outIdx, render)
+                            if (render) {
+                                awaitFrame(frameAvailable, frameLock)
+                                surfaceTexture.updateTexImage()
+                                surfaceTexture.getTransformMatrix(texMatrix)
+                                if (rotation != 0) {
+                                    android.opengl.Matrix.multiplyMM(
+                                        composedMatrix, 0, texMatrix, 0, rotMatrix, 0)
+                                    System.arraycopy(composedMatrix, 0, texMatrix, 0, 16)
+                                }
+                                GLES30.glViewport(0, 0, outW, outH)
+                                GLES30.glClearColor(0f, 0f, 0f, 1f)
+                                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                                GLES30.glUseProgram(program)
+                                GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+                                GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTex)
+                                GLES30.glUniform1i(uTex, 0)
+                                GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+                                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, overlayTex)
+                                GLES30.glUniform1i(uOverlay, 1)
+                                GLES30.glUniformMatrix4fv(uTexMatrix, 1, false, texMatrix, 0)
+                                GLES30.glEnableVertexAttribArray(aPos)
+                                GLES30.glVertexAttribPointer(aPos, 2, GLES30.GL_FLOAT, false, 0, FSQ_POS)
+                                GLES30.glEnableVertexAttribArray(aTex)
+                                GLES30.glVertexAttribPointer(aTex, 2, GLES30.GL_FLOAT, false, 0, FSQ_TEX_FLIPY)
+                                GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+
+                                egl.setPresentationTime(bi.presentationTimeUs * 1000)
+                                egl.swapBuffers()
+                            }
+                            if ((bi.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                encoder.signalEndOfInputStream()
+                                break@drainDec
+                            }
+                        }
+                    }
+                }
+                drainEnc@ while (true) {
+                    val outIdx = encoder.dequeueOutputBuffer(bi, 10_000L)
+                    when {
+                        outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break@drainEnc
+                        outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            check(!muxerStarted) { "format changed twice" }
+                            videoMuxIdx = muxer.addTrack(encoder.outputFormat)
+                            audioFormatStash?.let { audioMuxIdx = muxer.addTrack(it) }
+                            muxer.start()
+                            muxerStarted = true
+                        }
+                        outIdx >= 0 -> {
+                            val buf = encoder.getOutputBuffer(outIdx)!!
+                            if ((bi.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                                bi.size = 0
+                            }
+                            if (bi.size > 0 && muxerStarted) {
+                                buf.position(bi.offset)
+                                buf.limit(bi.offset + bi.size)
+                                muxer.writeSampleData(videoMuxIdx, buf, bi)
+                            }
+                            encoder.releaseOutputBuffer(outIdx, false)
+                            if ((bi.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                encodeDone = true
+                                break@drainEnc
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            try { decoder.stop() } catch (_: Throwable) {}
+            try { decoder.release() } catch (_: Throwable) {}
+            try { extractor.release() } catch (_: Throwable) {}
+            if (muxerStarted && audioMuxIdx >= 0) {
+                try { passthroughAudio(inputPath, audioIdx, audioMuxIdx, muxer) }
+                catch (t: Throwable) { Log.w(TAG, "audio passthrough failed", t) }
+            }
+            try { encoder.stop() } catch (_: Throwable) {}
+            try { encoder.release() } catch (_: Throwable) {}
+            if (muxerStarted) { try { muxer.stop() } catch (_: Throwable) {} }
+            try { muxer.release() } catch (_: Throwable) {}
+            try { GLES30.glDeleteTextures(2, intArrayOf(oesTex, overlayTex), 0) } catch (_: Throwable) {}
+            try { GLES30.glDeleteProgram(program) } catch (_: Throwable) {}
+            surfaceTexture.release()
+            decoderOutputSurface.release()
+            encoderInputSurface.release()
+            egl.release()
+        }
+        return outputPath
+    }
+
+    // ---------------- CROP / FLIP (video) --------------------------------
+
+    /**
+     * Crop + optional flip a video by re-encoding through the GL pipeline
+     * with a passthrough shader. Audio is copied through unchanged. Source's
+     * rotation flag is preserved on the output. Operates on the *unrotated
+     * buffer* dimensions — the crop rect is in normalised display-space (0..1
+     * after the source's rotation flag is applied), and translated into
+     * sample-space UVs inside the shader.
+     */
+    fun cropVideo(
+        ctx: Context,
+        inputPath: String,
+        outputPath: String,
+        left: Double, top: Double, right: Double, bottom: Double,
+        flipH: Boolean = false,
+        flipV: Boolean = false,
+    ): String {
+        File(outputPath).parentFile?.mkdirs()
+        File(outputPath).takeIf { it.exists() }?.delete()
+
+        // Probe.
+        val probe = MediaExtractor().apply { setDataSource(inputPath) }
+        var videoIdx = -1
+        var audioIdx = -1
+        var videoFormat: MediaFormat? = null
+        for (i in 0 until probe.trackCount) {
+            val f = probe.getTrackFormat(i)
+            val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
+            if (videoIdx < 0 && mime.startsWith("video/")) { videoIdx = i; videoFormat = f }
+            else if (audioIdx < 0 && mime.startsWith("audio/")) { audioIdx = i }
+        }
+        val vf = videoFormat ?: throw IllegalArgumentException("no video track")
+        val sourceW = vf.getInteger(MediaFormat.KEY_WIDTH)
+        val sourceH = vf.getInteger(MediaFormat.KEY_HEIGHT)
+        val durationUs = if (vf.containsKey(MediaFormat.KEY_DURATION))
+            vf.getLong(MediaFormat.KEY_DURATION) else 1L
+        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                            vf.containsKey(MediaFormat.KEY_ROTATION)) {
+            vf.getInteger(MediaFormat.KEY_ROTATION)
+        } else 0
+        probe.release()
+
+        // Output dimensions = crop window in the unrotated source buffer,
+        // rounded to even (H.264). The orientation hint on the muxer rotates
+        // at playback so dimensions stay in unrotated/sample coordinates.
+        val rawL = (left   * sourceW).toInt().coerceIn(0, sourceW - 2)
+        val rawT = (top    * sourceH).toInt().coerceIn(0, sourceH - 2)
+        val rawR = (right  * sourceW).toInt().coerceIn(rawL + 2, sourceW)
+        val rawB = (bottom * sourceH).toInt().coerceIn(rawT + 2, sourceH)
+        val outW = ((rawR - rawL) / 2) * 2
+        val outH = ((rawB - rawT) / 2) * 2
+
+        // Encoder + input Surface.
+        val outFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, outW, outH).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            setInteger(MediaFormat.KEY_BIT_RATE, 8_000_000)
+            setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+        }
+        val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        encoder.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        val encoderInputSurface = encoder.createInputSurface()
+        encoder.start()
+
+        val egl = EglWindow(encoderInputSurface, recordable = true)
+        egl.makeCurrent()
+
+        // OES texture + SurfaceTexture for decoder output.
+        val oesTex = IntArray(1).also { GLES30.glGenTextures(1, it, 0) }[0]
+        GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTex)
+        GLES30.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR.toFloat())
+        GLES30.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR.toFloat())
+        GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        val surfaceTexture = SurfaceTexture(oesTex).apply { setDefaultBufferSize(sourceW, sourceH) }
+        val decoderOutputSurface = Surface(surfaceTexture)
+        val frameAvailable = AtomicBoolean(false)
+        val frameLock = Object()
+        surfaceTexture.setOnFrameAvailableListener {
+            synchronized(frameLock) {
+                frameAvailable.set(true)
+                frameLock.notifyAll()
+            }
+        }
+
+        // Use the live-camera OES shader (filter.frag) with filter index 0
+        // (none). The crop rect is folded into the SurfaceTexture transform
+        // matrix; flips are applied by additional scale/translate.
+        val program = ShaderManager.buildProgram(
+            ShaderManager.readAsset(ctx, "shaders/oes.vert"),
+            ShaderManager.readAsset(ctx, "shaders/filter.frag"),
+        )
+        val locs = ProgramLocs(program, hasTexMatrix = true)
+
+        // Decoder.
+        val extractor = MediaExtractor().apply {
+            setDataSource(inputPath); selectTrack(videoIdx)
+        }
+        val decoder = MediaCodec.createDecoderByType(vf.getString(MediaFormat.KEY_MIME)!!)
+        decoder.configure(vf, decoderOutputSurface, null, 0)
+        decoder.start()
+
+        // Muxer with audio track added pre-start so passthrough works.
+        val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        if (rotation != 0) muxer.setOrientationHint(rotation)
+        var videoMuxIdx = -1
+        var audioMuxIdx = -1
+        var audioFormatStash: MediaFormat? = null
+        if (audioIdx >= 0) {
+            val ax = MediaExtractor().apply { setDataSource(inputPath); selectTrack(audioIdx) }
+            audioFormatStash = ax.getTrackFormat(0)
+            ax.release()
+        }
+        var muxerStarted = false
+
+        // Pre-build crop+flip texture matrix factors. Each frame multiplies
+        // the SurfaceTexture's natural transform by this.
+        val cropL = rawL.toFloat() / sourceW
+        val cropT = rawT.toFloat() / sourceH
+        val cropS = outW.toFloat() / sourceW
+        val cropTV = outH.toFloat() / sourceH
+        val cropMatrix = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
+        // Translate to crop origin then scale to crop size. Optionally flip.
+        android.opengl.Matrix.translateM(cropMatrix, 0, cropL, cropT, 0f)
+        android.opengl.Matrix.scaleM(cropMatrix, 0, cropS, cropTV, 1f)
+        if (flipH) {
+            // mirror across u=0.5 of the output quad
+            android.opengl.Matrix.translateM(cropMatrix, 0, 1f, 0f, 0f)
+            android.opengl.Matrix.scaleM(cropMatrix, 0, -1f, 1f, 1f)
+        }
+        if (flipV) {
+            android.opengl.Matrix.translateM(cropMatrix, 0, 0f, 1f, 0f)
+            android.opengl.Matrix.scaleM(cropMatrix, 0, 1f, -1f, 1f)
+        }
+
+        var inputDone = false
+        var encodeDone = false
+        val bi = MediaCodec.BufferInfo()
+        val texMatrix = FloatArray(16)
+        val startNanos = System.nanoTime()
+
+        try {
+            while (!encodeDone) {
+                if (!inputDone) {
+                    val inIdx = decoder.dequeueInputBuffer(10_000L)
+                    if (inIdx >= 0) {
+                        val inBuf = decoder.getInputBuffer(inIdx)!!
+                        val sz = extractor.readSampleData(inBuf, 0)
+                        if (sz < 0) {
+                            decoder.queueInputBuffer(inIdx, 0, 0, 0,
+                                MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            decoder.queueInputBuffer(inIdx, 0, sz, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+                drainDec@ while (true) {
+                    val outIdx = decoder.dequeueOutputBuffer(bi, 10_000L)
+                    when {
+                        outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break@drainDec
+                        outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> continue@drainDec
+                        outIdx >= 0 -> {
+                            val render = bi.size != 0
+                            decoder.releaseOutputBuffer(outIdx, render)
+                            if (render) {
+                                awaitFrame(frameAvailable, frameLock)
+                                surfaceTexture.updateTexImage()
+                                surfaceTexture.getTransformMatrix(texMatrix)
+                                // Compose: SurfaceTexture transform * crop+flip
+                                val tmp = FloatArray(16)
+                                android.opengl.Matrix.multiplyMM(tmp, 0, texMatrix, 0, cropMatrix, 0)
+                                System.arraycopy(tmp, 0, texMatrix, 0, 16)
+                                drawFrame(program, locs, oesTex, 0,
+                                    outW, outH,
+                                    timeSec = (System.nanoTime() - startNanos) / 1e9f,
+                                    filterId = "none", params = null,
+                                    texMatrix = texMatrix)
+                                egl.setPresentationTime(bi.presentationTimeUs * 1000)
+                                egl.swapBuffers()
+                            }
+                            if ((bi.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                encoder.signalEndOfInputStream()
+                                break@drainDec
+                            }
+                        }
+                    }
+                }
+                drainEnc@ while (true) {
+                    val outIdx = encoder.dequeueOutputBuffer(bi, 10_000L)
+                    when {
+                        outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break@drainEnc
+                        outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            check(!muxerStarted) { "format changed twice" }
+                            videoMuxIdx = muxer.addTrack(encoder.outputFormat)
+                            audioFormatStash?.let { audioMuxIdx = muxer.addTrack(it) }
+                            muxer.start()
+                            muxerStarted = true
+                        }
+                        outIdx >= 0 -> {
+                            val buf = encoder.getOutputBuffer(outIdx)!!
+                            if ((bi.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                                bi.size = 0
+                            }
+                            if (bi.size > 0 && muxerStarted) {
+                                buf.position(bi.offset)
+                                buf.limit(bi.offset + bi.size)
+                                muxer.writeSampleData(videoMuxIdx, buf, bi)
+                            }
+                            encoder.releaseOutputBuffer(outIdx, false)
+                            if ((bi.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                encodeDone = true
+                                break@drainEnc
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            try { decoder.stop() } catch (_: Throwable) {}
+            try { decoder.release() } catch (_: Throwable) {}
+            try { extractor.release() } catch (_: Throwable) {}
+            if (muxerStarted && audioMuxIdx >= 0) {
+                try { passthroughAudio(inputPath, audioIdx, audioMuxIdx, muxer) }
+                catch (t: Throwable) { Log.w(TAG, "audio passthrough failed", t) }
+            }
+            try { encoder.stop() } catch (_: Throwable) {}
+            try { encoder.release() } catch (_: Throwable) {}
+            if (muxerStarted) { try { muxer.stop() } catch (_: Throwable) {} }
+            try { muxer.release() } catch (_: Throwable) {}
+            try { GLES30.glDeleteTextures(1, intArrayOf(oesTex), 0) } catch (_: Throwable) {}
+            try { GLES30.glDeleteProgram(program) } catch (_: Throwable) {}
+            surfaceTexture.release()
+            decoderOutputSurface.release()
+            encoderInputSurface.release()
+            egl.release()
+        }
+        return outputPath
+    }
+
+    // ---------------- TRIM (video + audio passthrough) -------------------
+
+    /**
+     * Lossless trim: copy compressed video + audio samples between
+     * [startMs..endMs] straight into a new MP4 via MediaMuxer. No
+     * re-encode, no quality loss. The output starts at the closest
+     * keyframe ≤ startMs so the trimmed clip is decodable from the first
+     * frame (this is what every "fast trim" feature on Android does).
+     */
+    fun trimVideo(
+        inputPath: String,
+        outputPath: String,
+        startMs: Long,
+        endMs: Long,
+    ): String {
+        File(outputPath).parentFile?.mkdirs()
+        File(outputPath).takeIf { it.exists() }?.delete()
+
+        val startUs = startMs * 1000L
+        val endUs = endMs * 1000L
+
+        val probe = MediaExtractor().apply { setDataSource(inputPath) }
+        var videoSrcIdx = -1
+        var audioSrcIdx = -1
+        var rotation = 0
+        var maxInput = 1024 * 1024
+        for (i in 0 until probe.trackCount) {
+            val f = probe.getTrackFormat(i)
+            val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
+            if (videoSrcIdx < 0 && mime.startsWith("video/")) {
+                videoSrcIdx = i
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                    f.containsKey(MediaFormat.KEY_ROTATION)) {
+                    rotation = f.getInteger(MediaFormat.KEY_ROTATION)
+                }
+            } else if (audioSrcIdx < 0 && mime.startsWith("audio/")) {
+                audioSrcIdx = i
+            }
+            if (f.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                maxInput = maxOf(maxInput, f.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
+            }
+        }
+        probe.release()
+        if (videoSrcIdx < 0) throw IllegalArgumentException("no video track")
+
+        val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        if (rotation != 0) muxer.setOrientationHint(rotation)
+
+        // Add tracks BEFORE starting the muxer.
+        val videoExtractor = MediaExtractor().apply {
+            setDataSource(inputPath); selectTrack(videoSrcIdx)
+        }
+        val videoMuxIdx = muxer.addTrack(videoExtractor.getTrackFormat(0))
+        var audioExtractor: MediaExtractor? = null
+        var audioMuxIdx = -1
+        if (audioSrcIdx >= 0) {
+            audioExtractor = MediaExtractor().apply {
+                setDataSource(inputPath); selectTrack(audioSrcIdx)
+            }
+            audioMuxIdx = muxer.addTrack(audioExtractor.getTrackFormat(0))
+        }
+        muxer.start()
+
+        try {
+            // Seek video to closest sync (keyframe) at or before startUs.
+            videoExtractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            val baseUs = videoExtractor.sampleTime.coerceAtLeast(0L)
+            // Audio uses the same baseline so tracks stay in sync.
+            audioExtractor?.seekTo(baseUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+
+            val buf = ByteBuffer.allocate(maxInput)
+            val bi = MediaCodec.BufferInfo()
+
+            // Video stream.
+            while (true) {
+                buf.clear()
+                val sz = videoExtractor.readSampleData(buf, 0)
+                if (sz < 0) break
+                val pts = videoExtractor.sampleTime
+                if (pts > endUs) break
+                bi.offset = 0
+                bi.size = sz
+                bi.presentationTimeUs = (pts - baseUs).coerceAtLeast(0L)
+                bi.flags = videoExtractor.sampleFlags
+                muxer.writeSampleData(videoMuxIdx, buf, bi)
+                videoExtractor.advance()
+            }
+            // Audio stream.
+            audioExtractor?.let { ax ->
+                while (true) {
+                    buf.clear()
+                    val sz = ax.readSampleData(buf, 0)
+                    if (sz < 0) break
+                    val pts = ax.sampleTime
+                    if (pts > endUs) break
+                    if (pts < baseUs) { ax.advance(); continue }
+                    bi.offset = 0
+                    bi.size = sz
+                    bi.presentationTimeUs = (pts - baseUs).coerceAtLeast(0L)
+                    bi.flags = ax.sampleFlags
+                    muxer.writeSampleData(audioMuxIdx, buf, bi)
+                    ax.advance()
+                }
+            }
+        } finally {
+            try { muxer.stop() } catch (_: Throwable) {}
+            try { muxer.release() } catch (_: Throwable) {}
+            try { videoExtractor.release() } catch (_: Throwable) {}
+            try { audioExtractor?.release() } catch (_: Throwable) {}
+        }
+        return outputPath
+    }
+
     // ---------------- PREVIEW (single frame, shader-accurate) ------------
 
     /**
@@ -671,6 +1338,11 @@ object MediaProcessor {
                 out[1] = params["neuralSpeed"] ?: 0f
                 out[2] = params["neuralGlow"] ?: 0f
             }
+            "dogpatchPro" -> {
+                out[0] = params["dogpatchWarmth"] ?: 0f
+                out[1] = params["dogpatchBloom"] ?: 0f
+                out[2] = params["dogpatchTexture"] ?: 0f
+            }
         }
         val idx = when (id) {
             "kodak" -> 1; "vintage" -> 2; "retro" -> 3; "grain" -> 4; "vhs" -> 5
@@ -684,6 +1356,7 @@ object MediaProcessor {
             "cinematicAnamorphic" -> 24; "dreamLens" -> 25; "aurora" -> 26
             "lightRays" -> 27; "holographicGlass" -> 28; "photonTrails" -> 29
             "neuralGrid" -> 30
+            "dogpatchPro" -> 31
             else -> 0
         }
         return idx to out

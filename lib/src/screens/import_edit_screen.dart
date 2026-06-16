@@ -9,7 +9,10 @@ import 'package:video_player/video_player.dart';
 import '../engine/filter_engine.dart';
 import '../models/filter.dart';
 import '../widgets/filter_picker.dart';
+import 'annotate_screen.dart';
 import 'capture_viewer.dart';
+import 'crop_screen.dart';
+import 'trim_screen.dart';
 
 class ImportEditScreen extends StatefulWidget {
   const ImportEditScreen({super.key});
@@ -79,6 +82,9 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
     'liquidChrome', 'glassMorph', 'prismLens', 'cinematicAnamorphic',
     'dreamLens', 'aurora', 'lightRays', 'holographicGlass',
     'photonTrails', 'neuralGrid',
+    // Dogpatch Pro relies on bloom + grain + vignette which a ColorFilter
+    // matrix can't reproduce — needs the real shader render.
+    'dogpatchPro',
   };
 
   Future<void> _pick() async {
@@ -141,6 +147,99 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
     });
     if (isVideo) {
       final c = VideoPlayerController.file(File(source.path));
+      _video = c;
+      c.initialize().then((_) {
+        if (!mounted) { c.dispose(); return; }
+        setState(() {});
+        c..setLooping(true)..play();
+      }).catchError((_) {
+        if (!mounted) return;
+        c.dispose();
+        setState(() => _video = null);
+      });
+    }
+  }
+
+  Future<void> _openCrop() async {
+    final src = _source;
+    if (src == null) return;
+    // Pause the live video before handing off so the crop screen owns playback.
+    if (_isVideo) _video?.pause();
+    final cropped = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CropScreen(
+          source: File(src.path),
+          isVideo: _isVideo,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (cropped != null) {
+      await _replaceSource(XFile(cropped), isVideo: _isVideo);
+    } else if (_isVideo) {
+      _video?.play();
+    }
+  }
+
+  Future<void> _openAnnotate() async {
+    final src = _source;
+    if (src == null) return;
+    if (_isVideo) _video?.pause();
+    final saved = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AnnotateScreen(
+          source: File(src.path),
+          isVideo: _isVideo,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (saved != null) {
+      await _replaceSource(XFile(saved), isVideo: _isVideo);
+    } else if (_isVideo) {
+      _video?.play();
+    }
+  }
+
+  Future<void> _openTrim() async {
+    final src = _source;
+    if (src == null) return;
+    // Pause the live VideoPlayer so the trim screen owns playback.
+    _video?.pause();
+    final trimmed = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => TrimScreen(source: File(src.path))),
+    );
+    if (!mounted) return;
+    if (trimmed != null) {
+      await _replaceSource(XFile(trimmed), isVideo: true);
+    } else {
+      // No change — resume.
+      _video?.play();
+    }
+  }
+
+  Future<void> _replaceSource(XFile newSource, {required bool isVideo}) async {
+    // Throw away any cached video render — it belongs to the previous source.
+    await _dropVideoPreview();
+    final oldVideo = _video;
+    _video = null;
+    oldVideo?.dispose();
+
+    // Reset filter back to Original and clear the rendered preview file.
+    setState(() {
+      _source = newSource;
+      _isVideo = isVideo;
+      _filter = FilterRegistry.all.first;
+      _params = _filter.defaultParams;
+      _previewPath = null;
+      _previewVersion++;
+    });
+
+    if (isVideo) {
+      final c = VideoPlayerController.file(File(newSource.path));
       _video = c;
       c.initialize().then((_) {
         if (!mounted) { c.dispose(); return; }
@@ -314,6 +413,24 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
         backgroundColor: Colors.black,
         title: const Text('Import & Filter'),
         actions: [
+          if (_source != null)
+            IconButton(
+              icon: const Icon(Icons.crop, color: Colors.white),
+              tooltip: 'Crop',
+              onPressed: _processing ? null : _openCrop,
+            ),
+          if (_source != null && _isVideo)
+            IconButton(
+              icon: const Icon(Icons.content_cut, color: Colors.white),
+              tooltip: 'Trim',
+              onPressed: _processing ? null : _openTrim,
+            ),
+          if (_source != null)
+            IconButton(
+              icon: const Icon(Icons.draw, color: Colors.white),
+              tooltip: 'Annotate',
+              onPressed: _processing ? null : _openAnnotate,
+            ),
           if (_source != null)
             TextButton(
               onPressed: _processing ? null : _apply,

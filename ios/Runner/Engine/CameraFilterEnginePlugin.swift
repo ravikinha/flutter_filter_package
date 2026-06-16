@@ -85,6 +85,14 @@ public class CameraFilterEnginePlugin: NSObject, FlutterPlugin, FlutterStreamHan
             processVideo(args: args, result: result)
         case "previewFilter":
             previewFilter(args: args, result: result)
+        case "cropImage":
+            cropImage(args: args, result: result)
+        case "cropVideo":
+            cropVideo(args: args, result: result)
+        case "composeVideo":
+            composeVideo(args: args, result: result)
+        case "trimVideo":
+            trimVideo(args: args, result: result)
         case "cancelProcessing":
             currentVideoCancel?.cancelled = true
             result(nil)
@@ -169,6 +177,107 @@ public class CameraFilterEnginePlugin: NSObject, FlutterPlugin, FlutterStreamHan
             } catch {
                 DispatchQueue.main.async {
                     result(FlutterError(code: "PROC", message: error.localizedDescription, details: nil))
+                }
+            }
+        }
+    }
+
+    private func cropImage(args: [String: Any], result: @escaping FlutterResult) {
+        guard let input = args["inputPath"] as? String,
+              let output = args["outputPath"] as? String else {
+            result(FlutterError(code: "ARG", message: "missing args", details: nil))
+            return
+        }
+        let l = (args["left"] as? NSNumber)?.doubleValue ?? 0.0
+        let t = (args["top"] as? NSNumber)?.doubleValue ?? 0.0
+        let r = (args["right"] as? NSNumber)?.doubleValue ?? 1.0
+        let b = (args["bottom"] as? NSNumber)?.doubleValue ?? 1.0
+        let flipH = (args["flipH"] as? Bool) ?? false
+        let flipV = (args["flipV"] as? Bool) ?? false
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let path = try MediaProcessor.cropImage(
+                    inputPath: input, outputPath: output,
+                    left: l, top: t, right: r, bottom: b,
+                    flipH: flipH, flipV: flipV
+                )
+                DispatchQueue.main.async { result(path) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(code: "CROP", message: error.localizedDescription, details: nil))
+                }
+            }
+        }
+    }
+
+    private func composeVideo(args: [String: Any], result: @escaping FlutterResult) {
+        guard let input = args["inputPath"] as? String,
+              let output = args["outputPath"] as? String,
+              let overlay = args["overlayPngPath"] as? String else {
+            result(FlutterError(code: "ARG", message: "missing args", details: nil))
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let path = try MediaProcessor.composeVideo(
+                    inputPath: input, outputPath: output,
+                    overlayPngPath: overlay
+                )
+                DispatchQueue.main.async { result(path) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(code: "COMPOSE", message: error.localizedDescription, details: nil))
+                }
+            }
+        }
+    }
+
+    private func cropVideo(args: [String: Any], result: @escaping FlutterResult) {
+        guard let input = args["inputPath"] as? String,
+              let output = args["outputPath"] as? String else {
+            result(FlutterError(code: "ARG", message: "missing args", details: nil))
+            return
+        }
+        let l = (args["left"] as? NSNumber)?.doubleValue ?? 0.0
+        let t = (args["top"] as? NSNumber)?.doubleValue ?? 0.0
+        let r = (args["right"] as? NSNumber)?.doubleValue ?? 1.0
+        let b = (args["bottom"] as? NSNumber)?.doubleValue ?? 1.0
+        let flipH = (args["flipH"] as? Bool) ?? false
+        let flipV = (args["flipV"] as? Bool) ?? false
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let path = try MediaProcessor.cropVideo(
+                    inputPath: input, outputPath: output,
+                    left: l, top: t, right: r, bottom: b,
+                    flipH: flipH, flipV: flipV
+                )
+                DispatchQueue.main.async { result(path) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(code: "CROP", message: error.localizedDescription, details: nil))
+                }
+            }
+        }
+    }
+
+    private func trimVideo(args: [String: Any], result: @escaping FlutterResult) {
+        guard let input = args["inputPath"] as? String,
+              let output = args["outputPath"] as? String else {
+            result(FlutterError(code: "ARG", message: "missing args", details: nil))
+            return
+        }
+        let startMs = (args["startMs"] as? NSNumber)?.int64Value ?? 0
+        let endMs = (args["endMs"] as? NSNumber)?.int64Value ?? Int64.max
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let path = try MediaProcessor.trimVideo(
+                    inputPath: input, outputPath: output,
+                    startMs: startMs, endMs: endMs
+                )
+                DispatchQueue.main.async { result(path) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(code: "TRIM", message: error.localizedDescription, details: nil))
                 }
             }
         }

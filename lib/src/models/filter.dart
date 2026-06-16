@@ -294,6 +294,21 @@ class FilterRegistry {
         FilterParam(key: 'neuralGlow', label: 'Glow', min: 0, max: 1, defaultValue: 0.75),
       ],
     ),
+    CameraFilter(
+      id: 'dogpatchPro',
+      name: 'Dogpatch Pro',
+      params: [
+        // p0 — warmth: drives warm film grade + golden highlights + curves.
+        // Default 0.70 lands near the spec's recommended look (warmth 0.12,
+        // contrast 1.15, saturation 0.95, golden highlights 0.20).
+        FilterParam(key: 'dogpatchWarmth', label: 'Warmth', min: 0, max: 1, defaultValue: 0.70),
+        // p1 — bloom radius + intensity (recommended bloom 0.18).
+        FilterParam(key: 'dogpatchBloom', label: 'Bloom', min: 0, max: 1, defaultValue: 0.65),
+        // p2 — grain + soft vignette together (recommended grain 0.03,
+        // vignette 0.15). Tied so the "film texture" feel is one knob.
+        FilterParam(key: 'dogpatchTexture', label: 'Film Texture', min: 0, max: 1, defaultValue: 0.55),
+      ],
+    ),
   ];
 
   static CameraFilter byId(String id) =>

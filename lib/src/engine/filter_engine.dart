@@ -147,6 +147,93 @@ class FilterEngine {
     return r ?? outputPath;
   }
 
+  /// Crop an image to the normalized rect [left, top, right, bottom] (each
+  /// in 0..1 of the source image) and optionally flip [flipH]/[flipV]. The
+  /// crop is lossless within the kept region; flips reuse the same pixels
+  /// with no resampling. Returns the saved JPEG path.
+  Future<String> cropImage({
+    required String inputPath,
+    required String outputPath,
+    required double left,
+    required double top,
+    required double right,
+    required double bottom,
+    bool flipH = false,
+    bool flipV = false,
+  }) async {
+    final r = await _method.invokeMethod<String>('cropImage', {
+      'inputPath': inputPath,
+      'outputPath': outputPath,
+      'left': left,
+      'top': top,
+      'right': right,
+      'bottom': bottom,
+      'flipH': flipH,
+      'flipV': flipV,
+    });
+    return r ?? outputPath;
+  }
+
+  /// Composite a transparent PNG [overlayPngPath] over every frame of the
+  /// source video. Audio is passed through, source orientation is preserved.
+  /// Use this to bake paint strokes, text and emoji stickers into a video.
+  Future<String> composeVideo({
+    required String inputPath,
+    required String outputPath,
+    required String overlayPngPath,
+  }) async {
+    final r = await _method.invokeMethod<String>('composeVideo', {
+      'inputPath': inputPath,
+      'outputPath': outputPath,
+      'overlayPngPath': overlayPngPath,
+    });
+    return r ?? outputPath;
+  }
+
+  /// Crop + optional flip a video. Native re-encodes the chosen window at
+  /// source quality; audio is passthrough; source orientation is preserved
+  /// in the output's metadata so players show it upright.
+  Future<String> cropVideo({
+    required String inputPath,
+    required String outputPath,
+    required double left,
+    required double top,
+    required double right,
+    required double bottom,
+    bool flipH = false,
+    bool flipV = false,
+  }) async {
+    final r = await _method.invokeMethod<String>('cropVideo', {
+      'inputPath': inputPath,
+      'outputPath': outputPath,
+      'left': left,
+      'top': top,
+      'right': right,
+      'bottom': bottom,
+      'flipH': flipH,
+      'flipV': flipV,
+    });
+    return r ?? outputPath;
+  }
+
+  /// Trim a video to [startMs..endMs] without re-encoding. Audio + video
+  /// tracks are copied through bit-identical from the source; the source's
+  /// orientation flag is preserved.
+  Future<String> trimVideo({
+    required String inputPath,
+    required String outputPath,
+    required int startMs,
+    required int endMs,
+  }) async {
+    final r = await _method.invokeMethod<String>('trimVideo', {
+      'inputPath': inputPath,
+      'outputPath': outputPath,
+      'startMs': startMs,
+      'endMs': endMs,
+    });
+    return r ?? outputPath;
+  }
+
   /// Copy a file at [path] into the OS Photos / Gallery.
   /// Returns true on success.
   Future<bool> saveToGallery(String path, {required bool isVideo}) async {

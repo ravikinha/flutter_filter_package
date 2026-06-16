@@ -117,6 +117,10 @@ class CameraFilterEnginePlugin(private val initialActivity: Activity? = null)
                 "processImage" -> handleProcessImage(call, result)
                 "processVideo" -> handleProcessVideo(call, result)
                 "previewFilter" -> handlePreviewFilter(call, result)
+                "cropImage" -> handleCropImage(call, result)
+                "cropVideo" -> handleCropVideo(call, result)
+                "composeVideo" -> handleComposeVideo(call, result)
+                "trimVideo" -> handleTrimVideo(call, result)
                 "cancelProcessing" -> {
                     currentVideoCancel?.set(true)
                     result.success(null)
@@ -168,6 +172,75 @@ class CameraFilterEnginePlugin(private val initialActivity: Activity? = null)
                 mainHandler.post { result.success(saved) }
             } catch (t: Throwable) {
                 mainHandler.post { result.error("PROC", t.message, t.stackTraceToString()) }
+            }
+        }
+    }
+
+    private fun handleCropImage(call: MethodCall, result: MethodChannel.Result) {
+        val input = call.argument<String>("inputPath")!!
+        val output = call.argument<String>("outputPath")!!
+        val left = (call.argument<Number>("left") ?: 0.0).toDouble()
+        val top = (call.argument<Number>("top") ?: 0.0).toDouble()
+        val right = (call.argument<Number>("right") ?: 1.0).toDouble()
+        val bottom = (call.argument<Number>("bottom") ?: 1.0).toDouble()
+        val flipH = call.argument<Boolean>("flipH") ?: false
+        val flipV = call.argument<Boolean>("flipV") ?: false
+        ioExecutor.execute {
+            try {
+                val saved = MediaProcessor.cropImage(context, input, output,
+                    left, top, right, bottom, flipH, flipV)
+                mainHandler.post { result.success(saved) }
+            } catch (t: Throwable) {
+                mainHandler.post { result.error("CROP", t.message, t.stackTraceToString()) }
+            }
+        }
+    }
+
+    private fun handleCropVideo(call: MethodCall, result: MethodChannel.Result) {
+        val input = call.argument<String>("inputPath")!!
+        val output = call.argument<String>("outputPath")!!
+        val left = (call.argument<Number>("left") ?: 0.0).toDouble()
+        val top = (call.argument<Number>("top") ?: 0.0).toDouble()
+        val right = (call.argument<Number>("right") ?: 1.0).toDouble()
+        val bottom = (call.argument<Number>("bottom") ?: 1.0).toDouble()
+        val flipH = call.argument<Boolean>("flipH") ?: false
+        val flipV = call.argument<Boolean>("flipV") ?: false
+        ioExecutor.execute {
+            try {
+                val saved = MediaProcessor.cropVideo(context, input, output,
+                    left, top, right, bottom, flipH, flipV)
+                mainHandler.post { result.success(saved) }
+            } catch (t: Throwable) {
+                mainHandler.post { result.error("CROP", t.message, t.stackTraceToString()) }
+            }
+        }
+    }
+
+    private fun handleComposeVideo(call: MethodCall, result: MethodChannel.Result) {
+        val input = call.argument<String>("inputPath")!!
+        val output = call.argument<String>("outputPath")!!
+        val overlay = call.argument<String>("overlayPngPath")!!
+        ioExecutor.execute {
+            try {
+                val saved = MediaProcessor.composeVideo(context, input, output, overlay)
+                mainHandler.post { result.success(saved) }
+            } catch (t: Throwable) {
+                mainHandler.post { result.error("COMPOSE", t.message, t.stackTraceToString()) }
+            }
+        }
+    }
+
+    private fun handleTrimVideo(call: MethodCall, result: MethodChannel.Result) {
+        val input = call.argument<String>("inputPath")!!
+        val output = call.argument<String>("outputPath")!!
+        val startMs = (call.argument<Number>("startMs") ?: 0).toLong()
+        val endMs = (call.argument<Number>("endMs") ?: Long.MAX_VALUE).toLong()
+        ioExecutor.execute {
+            try {
+                val saved = MediaProcessor.trimVideo(input, output, startMs, endMs)
+                mainHandler.post { result.success(saved) }
+            } catch (t: Throwable) {
+                mainHandler.post { result.error("TRIM", t.message, t.stackTraceToString()) }
             }
         }
     }

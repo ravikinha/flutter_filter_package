@@ -453,6 +453,35 @@ vec3 fNeuralGrid(vec3 c, vec2 uv) {
     return clamp(col, 0.0, 1.0);
 }
 
+vec3 fDogpatchPro(vec3 c, vec2 uv) {
+    float warmth = uP0;
+    float bloomAmt = uP1;
+    float tex = uP2;
+    c.r = clamp(c.r + 0.06 * warmth, 0.0, 1.0);
+    c.g = clamp(c.g + 0.025 * warmth, 0.0, 1.0);
+    c.b = clamp(c.b - 0.04 * warmth, 0.0, 1.0);
+    c = clamp((c - 0.5) * (1.0 + 0.18 * warmth) + 0.5, 0.0, 1.0);
+    float l1 = dot(c, vec3(0.299, 0.587, 0.114));
+    c = mix(vec3(l1), c, 1.0 - 0.10 * warmth);
+    c.r = clamp(c.r * (1.0 + 0.04 * warmth), 0.0, 1.0);
+    c.g = clamp(c.g * (1.0 - 0.02 * warmth), 0.0, 1.0);
+    c.b *= mix(1.0, 0.92, warmth * (1.0 - l1));
+    float lum = dot(c, vec3(0.299, 0.587, 0.114));
+    float hi = smoothstep(0.65, 1.0, lum);
+    c.r = clamp(c.r + 0.14 * hi * warmth, 0.0, 1.0);
+    c.g = clamp(c.g + 0.11 * hi * warmth, 0.0, 1.0);
+    c.b = clamp(c.b - 0.07 * hi * warmth, 0.0, 1.0);
+    vec3 blurred = sampleBlur(uv, mix(3.0, 10.0, bloomAmt));
+    vec3 bright = max(blurred - 0.55, vec3(0.0));
+    c += bright * bloomAmt * 1.20;
+    float n = hash(uv * uResolution + floor(uTime * 6.0)) - 0.5;
+    c += n * tex * 0.08;
+    vec2 vUv = uv - 0.5;
+    float vigShape = smoothstep(0.95, 0.30, length(vUv) * 1.15);
+    c *= mix(1.0, vigShape, tex * 0.45);
+    return clamp(c, 0.0, 1.0);
+}
+
 void main() {
     vec3 src = texture(uTex, vTex).rgb;
     vec3 col = src;
@@ -486,6 +515,7 @@ void main() {
     else if (uFilter == 28) col = fHolographicGlass(src, vTex);
     else if (uFilter == 29) col = fPhotonTrails(src, vTex);
     else if (uFilter == 30) col = fNeuralGrid(src, vTex);
+    else if (uFilter == 31) col = fDogpatchPro(src, vTex);
     col = applyLut(col);
     fragColor = vec4(col, 1.0);
 }

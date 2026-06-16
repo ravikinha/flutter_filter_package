@@ -134,7 +134,8 @@ class GLRenderer(
                 "chromeIntensity", "glassRefraction", "prismStrength",
                 "anamorphicFlare", "dreamLensGlow", "auroraSpeed",
                 "rayIntensity", "holoGlassStrength", "trailLength",
-                "neuralDensity" -> params[0] = value
+                "neuralDensity",
+                "dogpatchWarmth" -> params[0] = value
                 // p1 — secondary modifier (often scanlines / hue / contrast)
                 "contrast", "vignetteStrength", "fade", "scanlineIntensity",
                 "distortionAmount", "orangeStrength", "bloomRadius",
@@ -144,14 +145,16 @@ class GLRenderer(
                 "chromeReflection", "glassTransparency", "prismRainbow",
                 "anamorphicBloom", "dreamLensBloom", "auroraStrength",
                 "rayLength", "holoGlassRainbow", "trailBrightness",
-                "neuralSpeed" -> params[1] = value
+                "neuralSpeed",
+                "dogpatchBloom" -> params[1] = value
                 // p2 — tertiary (overlays / extras)
                 "saturation", "lightLeakStrength", "noiseIntensity",
                 "gridIntensity", "crtBarrel", "vhsProScan",
                 "chromeDistortion", "glassEdge", "prismDispersion",
                 "anamorphicGrain", "dreamLensLeak", "auroraGlow",
                 "rayBloom", "holoGlassGlow", "trailFade",
-                "neuralGlow" -> params[2] = value
+                "neuralGlow",
+                "dogpatchTexture" -> params[2] = value
             }
         }
     }
@@ -504,6 +507,11 @@ class GLRenderer(
                 params[1] = p["neuralSpeed"] ?: 0f
                 params[2] = p["neuralGlow"] ?: 0f
             }
+            "dogpatchPro" -> {
+                params[0] = p["dogpatchWarmth"] ?: 0f
+                params[1] = p["dogpatchBloom"] ?: 0f
+                params[2] = p["dogpatchTexture"] ?: 0f
+            }
         }
     }
 
@@ -519,6 +527,7 @@ class GLRenderer(
         "cinematicAnamorphic" -> 24; "dreamLens" -> 25; "aurora" -> 26
         "lightRays" -> 27; "holographicGlass" -> 28; "photonTrails" -> 29
         "neuralGrid" -> 30
+        "dogpatchPro" -> 31
         else -> 0
     }
 

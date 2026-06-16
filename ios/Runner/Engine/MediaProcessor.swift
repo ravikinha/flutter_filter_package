@@ -122,6 +122,351 @@ enum MediaProcessor {
         CGImageDestinationFinalize(dest)
     }
 
+    // MARK: - Crop (image)
+
+    /// Crop the image at [inputPath] to the normalised rect
+    /// (left, top, right, bottom) in 0..1 of the EXIF-uprighted image and
+    /// write a JPEG to [outputPath]. Lossless within the crop window — no
+    /// re-scale of the kept pixels.
+    static func cropImage(
+        inputPath: String,
+        outputPath: String,
+        left: Double, top: Double, right: Double, bottom: Double,
+        flipH: Bool = false, flipV: Bool = false
+    ) throws -> String {
+        guard let image = UIImage(contentsOfFile: inputPath),
+              let cg = image.cgImage else {
+            throw NSError(domain: "cfe", code: 130, userInfo: [
+                NSLocalizedDescriptionKey: "cannot decode image"
+            ])
+        }
+        let upright = normalize(image: image, cgImage: cg)
+        let w = CGFloat(upright.width)
+        let h = CGFloat(upright.height)
+        var l = max(0, left * Double(w))
+        var t = max(0, top * Double(h))
+        var r = min(Double(w), right * Double(w))
+        var b = min(Double(h), bottom * Double(h))
+        if r - l < 1 { r = l + 1 }
+        if b - t < 1 { b = t + 1 }
+        let rect = CGRect(
+            x: CGFloat(l).rounded(.down),
+            y: CGFloat(t).rounded(.down),
+            width: CGFloat(r - l).rounded(.down),
+            height: CGFloat(b - t).rounded(.down)
+        )
+        guard let cropped = upright.cropping(to: rect) else {
+            throw NSError(domain: "cfe", code: 131, userInfo: [
+                NSLocalizedDescriptionKey: "cropping failed"
+            ])
+        }
+        var finalImage = cropped
+        if flipH || flipV {
+            let cw = cropped.width
+            let ch = cropped.height
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            guard let ctx = CGContext(
+                data: nil, width: cw, height: ch,
+                bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                          | CGBitmapInfo.byteOrder32Little.rawValue
+            ) else {
+                throw NSError(domain: "cfe", code: 133, userInfo: [
+                    NSLocalizedDescriptionKey: "cgcontext flip failed"
+                ])
+            }
+            // Apply each flip by mirroring on that axis.
+            ctx.translateBy(x: flipH ? CGFloat(cw) : 0,
+                            y: flipV ? CGFloat(ch) : 0)
+            ctx.scaleBy(x: flipH ? -1 : 1, y: flipV ? -1 : 1)
+            ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: cw, height: ch))
+            if let flipped = ctx.makeImage() {
+                finalImage = flipped
+            }
+        }
+        try writeJpeg(cgImage: finalImage, to: outputPath, quality: 0.95)
+        return outputPath
+    }
+
+    /// Crop + optional flip a video losslessly-as-much-as-possible. Uses
+    /// AVMutableVideoComposition to define a render size matching the crop
+    /// rect, with a transform that translates the cropped region to the
+    /// output origin and mirrors on the requested axes. Audio is preserved
+    /// (passthrough), and the source's preferredTransform is composed in so
+    /// the output is upright.
+    static func cropVideo(
+        inputPath: String,
+        outputPath: String,
+        left: Double, top: Double, right: Double, bottom: Double,
+        flipH: Bool = false, flipV: Bool = false
+    ) throws -> String {
+        let inputURL = URL(fileURLWithPath: inputPath)
+        let outURL = URL(fileURLWithPath: outputPath)
+        try? FileManager.default.removeItem(at: outURL)
+        try FileManager.default.createDirectory(
+            at: outURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let asset = AVURLAsset(url: inputURL)
+        guard let track = asset.tracks(withMediaType: .video).first else {
+            throw NSError(domain: "cfe", code: 150, userInfo: [
+                NSLocalizedDescriptionKey: "no video track"
+            ])
+        }
+        // Display-space dimensions (after orientation).
+        let natural = track.naturalSize
+        let xf = track.preferredTransform
+        let displaySize = natural.applying(xf)
+        let displayW = abs(displaySize.width)
+        let displayH = abs(displaySize.height)
+        // Crop rect in display pixels.
+        let cropX = max(0.0, left * Double(displayW))
+        let cropY = max(0.0, top  * Double(displayH))
+        let cropW = max(2.0, (right - left) * Double(displayW))
+        let cropH = max(2.0, (bottom - top) * Double(displayH))
+        let outSize = CGSize(width: CGFloat(cropW).rounded(.down),
+                             height: CGFloat(cropH).rounded(.down))
+
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = outSize
+        let nominal = track.nominalFrameRate
+        composition.frameDuration = CMTime(
+            value: 1,
+            timescale: CMTimeScale(nominal > 0 ? Int32(nominal.rounded()) : 30)
+        )
+
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
+
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        // Compose: source preferred transform → translate so crop top-left
+        // lands at the output origin → flip if requested.
+        var t = xf
+        t = t.concatenating(
+            CGAffineTransform(translationX: -CGFloat(cropX), y: -CGFloat(cropY))
+        )
+        if flipH {
+            // Mirror on output X axis around output width.
+            t = t.concatenating(CGAffineTransform(scaleX: -1, y: 1))
+            t = t.concatenating(CGAffineTransform(translationX: outSize.width, y: 0))
+        }
+        if flipV {
+            t = t.concatenating(CGAffineTransform(scaleX: 1, y: -1))
+            t = t.concatenating(CGAffineTransform(translationX: 0, y: outSize.height))
+        }
+        layer.setTransform(t, at: .zero)
+        instruction.layerInstructions = [layer]
+        composition.instructions = [instruction]
+
+        guard let exporter = AVAssetExportSession(
+            asset: asset, presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            throw NSError(domain: "cfe", code: 151, userInfo: [
+                NSLocalizedDescriptionKey: "exporter init failed"
+            ])
+        }
+        exporter.outputURL = outURL
+        exporter.outputFileType = .mp4
+        exporter.videoComposition = composition
+        exporter.shouldOptimizeForNetworkUse = true
+
+        let sem = DispatchSemaphore(value: 0)
+        exporter.exportAsynchronously { sem.signal() }
+        sem.wait()
+
+        switch exporter.status {
+        case .completed: return outputPath
+        case .failed, .cancelled:
+            throw exporter.error ?? NSError(domain: "cfe", code: 152, userInfo: [
+                NSLocalizedDescriptionKey: "crop export \(exporter.status.rawValue)"
+            ])
+        default:
+            throw NSError(domain: "cfe", code: 153, userInfo: [
+                NSLocalizedDescriptionKey: "crop export did not finish"
+            ])
+        }
+    }
+
+    private static func writeJpeg(cgImage cg: CGImage, to path: String, quality: Float) throws {
+        let url = URL(fileURLWithPath: path)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.removeItem(at: url)
+        guard let dest = CGImageDestinationCreateWithURL(
+            url as CFURL, "public.jpeg" as CFString, 1, nil
+        ) else {
+            throw NSError(domain: "cfe", code: 132, userInfo: nil)
+        }
+        CGImageDestinationAddImage(dest, cg, [
+            kCGImageDestinationLossyCompressionQuality: quality
+        ] as CFDictionary)
+        CGImageDestinationFinalize(dest)
+    }
+
+    // MARK: - Compose (overlay PNG onto every frame)
+
+    /// Composite a transparent PNG onto every frame of the video. The overlay
+    /// is rendered through AVFoundation's animation tool, so it lives in
+    /// *display orientation* (post-preferred-transform). The caller renders
+    /// the PNG at display dimensions and AVFoundation places it 1:1 over the
+    /// uprighted video frames. Audio is preserved.
+    static func composeVideo(
+        inputPath: String,
+        outputPath: String,
+        overlayPngPath: String
+    ) throws -> String {
+        let inputURL = URL(fileURLWithPath: inputPath)
+        let outURL = URL(fileURLWithPath: outputPath)
+        try? FileManager.default.removeItem(at: outURL)
+        try FileManager.default.createDirectory(
+            at: outURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let asset = AVURLAsset(url: inputURL)
+        guard let track = asset.tracks(withMediaType: .video).first else {
+            throw NSError(domain: "cfe", code: 160, userInfo: [
+                NSLocalizedDescriptionKey: "no video track"
+            ])
+        }
+        let natural = track.naturalSize
+        let xf = track.preferredTransform
+        let display = natural.applying(xf)
+        let renderSize = CGSize(
+            width: abs(display.width).rounded(.down),
+            height: abs(display.height).rounded(.down)
+        )
+
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = renderSize
+        let nominal = track.nominalFrameRate
+        composition.frameDuration = CMTime(
+            value: 1,
+            timescale: CMTimeScale(nominal > 0 ? Int32(nominal.rounded()) : 30)
+        )
+
+        let instr = AVMutableVideoCompositionInstruction()
+        instr.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        // The preferredTransform alone lays the source upright into the
+        // renderSize; no further translate/scale needed for compose.
+        layer.setTransform(xf, at: .zero)
+        instr.layerInstructions = [layer]
+        composition.instructions = [instr]
+
+        // Overlay layer.
+        guard let overlayImage = UIImage(contentsOfFile: overlayPngPath),
+              let overlayCG = overlayImage.cgImage else {
+            throw NSError(domain: "cfe", code: 161, userInfo: [
+                NSLocalizedDescriptionKey: "cannot load overlay"
+            ])
+        }
+        let parent = CALayer()
+        parent.frame = CGRect(origin: .zero, size: renderSize)
+        let videoLayer = CALayer()
+        videoLayer.frame = parent.frame
+        let overlayLayer = CALayer()
+        overlayLayer.frame = parent.frame
+        overlayLayer.contents = overlayCG
+        overlayLayer.contentsGravity = .resize
+        overlayLayer.masksToBounds = true
+        // Core Animation flips Y vs. the video render space — when the tool
+        // composes, the overlay's bottom corresponds to the video's top.
+        // Pre-flip the layer's geometry so the user sees what they drew.
+        overlayLayer.transform = CATransform3DScale(CATransform3DIdentity, 1, -1, 1)
+        parent.addSublayer(videoLayer)
+        parent.addSublayer(overlayLayer)
+        composition.animationTool = AVVideoCompositionCoreAnimationTool(
+            postProcessingAsVideoLayer: videoLayer, in: parent
+        )
+
+        guard let exporter = AVAssetExportSession(
+            asset: asset, presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            throw NSError(domain: "cfe", code: 162, userInfo: [
+                NSLocalizedDescriptionKey: "exporter init failed"
+            ])
+        }
+        exporter.outputURL = outURL
+        exporter.outputFileType = .mp4
+        exporter.videoComposition = composition
+        exporter.shouldOptimizeForNetworkUse = true
+
+        let sem = DispatchSemaphore(value: 0)
+        exporter.exportAsynchronously { sem.signal() }
+        sem.wait()
+        switch exporter.status {
+        case .completed: return outputPath
+        case .failed, .cancelled:
+            throw exporter.error ?? NSError(domain: "cfe", code: 163, userInfo: [
+                NSLocalizedDescriptionKey: "compose export \(exporter.status.rawValue)"
+            ])
+        default:
+            throw NSError(domain: "cfe", code: 164, userInfo: [
+                NSLocalizedDescriptionKey: "compose export did not finish"
+            ])
+        }
+    }
+
+    // MARK: - Trim (video, passthrough)
+
+    /// Trim the video at [inputPath] to [startMs..endMs] using
+    /// AVAssetExportSession with the passthrough preset, so video + audio
+    /// are copied bit-identical with the source's orientation flag intact.
+    static func trimVideo(
+        inputPath: String,
+        outputPath: String,
+        startMs: Int64,
+        endMs: Int64
+    ) throws -> String {
+        let inputURL = URL(fileURLWithPath: inputPath)
+        let outURL = URL(fileURLWithPath: outputPath)
+        try? FileManager.default.removeItem(at: outURL)
+        try FileManager.default.createDirectory(
+            at: outURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let asset = AVURLAsset(url: inputURL)
+        guard let exporter = AVAssetExportSession(
+            asset: asset, presetName: AVAssetExportPresetPassthrough
+        ) else {
+            throw NSError(domain: "cfe", code: 140, userInfo: [
+                NSLocalizedDescriptionKey: "exporter init failed"
+            ])
+        }
+        exporter.outputURL = outURL
+        exporter.outputFileType = .mp4
+        exporter.shouldOptimizeForNetworkUse = true
+
+        let durationMs = Int64(CMTimeGetSeconds(asset.duration) * 1000.0)
+        let s = max(0, min(startMs, durationMs - 1))
+        let e = max(s + 1, min(endMs, durationMs))
+        let start = CMTime(value: s, timescale: 1000)
+        let dur = CMTime(value: e - s, timescale: 1000)
+        exporter.timeRange = CMTimeRange(start: start, duration: dur)
+
+        let sem = DispatchSemaphore(value: 0)
+        exporter.exportAsynchronously { sem.signal() }
+        sem.wait()
+
+        switch exporter.status {
+        case .completed:
+            return outputPath
+        case .failed, .cancelled:
+            throw exporter.error ?? NSError(domain: "cfe", code: 141, userInfo: [
+                NSLocalizedDescriptionKey: "trim export \(exporter.status.rawValue)"
+            ])
+        default:
+            throw NSError(domain: "cfe", code: 142, userInfo: [
+                NSLocalizedDescriptionKey: "trim export did not finish"
+            ])
+        }
+    }
+
     // MARK: - Preview (single frame, shader-accurate)
 
     /// For images: same as processImage.
