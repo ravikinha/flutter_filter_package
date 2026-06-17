@@ -37,6 +37,8 @@ class FilterEngine(
     private var lensFront = startFront
     private var cameraProvider: ProcessCameraProvider? = null
     private var preview: Preview? = null
+    private var camera: androidx.camera.core.Camera? = null
+    private var pendingZoom: Float = 0f   // last requested linear zoom (0..1)
 
     private val outputSurfaceTexture: SurfaceTexture = textureEntry.surfaceTexture().apply {
         setDefaultBufferSize(targetWidth, targetHeight)
@@ -81,12 +83,22 @@ class FilterEngine(
             val selector = if (lensFront) CameraSelector.DEFAULT_FRONT_CAMERA
                            else CameraSelector.DEFAULT_BACK_CAMERA
             try {
-                provider.bindToLifecycle(owner, selector, p)
+                val cam = provider.bindToLifecycle(owner, selector, p)
+                camera = cam
                 preview = p
+                // Re-apply any zoom the user set before/while re-binding.
+                cam.cameraControl.setLinearZoom(pendingZoom.coerceIn(0f, 1f))
             } catch (e: Exception) {
                 Log.e(TAG, "bindToLifecycle failed", e)
             }
         }, mainExecutor)
+    }
+
+    fun setZoom(level: Float) {
+        pendingZoom = level.coerceIn(0f, 1f)
+        activity.runOnUiThread {
+            camera?.cameraControl?.setLinearZoom(pendingZoom)
+        }
     }
 
     fun setFilter(id: String, params: Map<String, Float>?) {

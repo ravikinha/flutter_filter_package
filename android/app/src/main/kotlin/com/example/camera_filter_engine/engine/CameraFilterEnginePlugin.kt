@@ -94,6 +94,11 @@ class CameraFilterEnginePlugin(private val initialActivity: Activity? = null)
                     val front = engine?.switchCamera() ?: false
                     result.success(if (front) "front" else "back")
                 }
+                "setZoom" -> {
+                    val level = (call.argument<Number>("level") ?: 0.0).toFloat()
+                    engine?.setZoom(level)
+                    result.success(null)
+                }
                 "takePicture" -> {
                     val path = call.argument<String>("path")!!
                     engine?.takePicture(path) { p -> result.success(p) }
@@ -162,13 +167,14 @@ class CameraFilterEnginePlugin(private val initialActivity: Activity? = null)
         val input = call.argument<String>("inputPath")!!
         val output = call.argument<String>("outputPath")!!
         val filterId = call.argument<String>("filterId") ?: "none"
-        @Suppress("UNCHECKED_CAST")
-        val params = call.argument<Map<String, Any?>>("params")
-            ?.mapValues { (it.value as Number).toFloat() }
+        val params = floatParams(call, "params")
         val lutPath = call.argument<String>("lutPath")
+        val filterId2 = call.argument<String>("filterId2")
+        val params2 = floatParams(call, "params2")
         ioExecutor.execute {
             try {
-                val saved = MediaProcessor.processImage(context, input, output, filterId, params, lutPath)
+                val saved = MediaProcessor.processImage(context, input, output, filterId, params,
+                    lutPath, filterId2, params2)
                 mainHandler.post { result.success(saved) }
             } catch (t: Throwable) {
                 mainHandler.post { result.error("PROC", t.message, t.stackTraceToString()) }
@@ -245,21 +251,27 @@ class CameraFilterEnginePlugin(private val initialActivity: Activity? = null)
         }
     }
 
+    private fun floatParams(call: MethodCall, key: String): Map<String, Float>? {
+        @Suppress("UNCHECKED_CAST")
+        return call.argument<Map<String, Any?>>(key)
+            ?.mapValues { (it.value as Number).toFloat() }
+    }
+
     private fun handlePreviewFilter(call: MethodCall, result: MethodChannel.Result) {
         val input = call.argument<String>("inputPath")!!
         val output = call.argument<String>("outputPath")!!
         val filterId = call.argument<String>("filterId") ?: "none"
         val isVideo = call.argument<Boolean>("isVideo") ?: false
         val atSeconds = (call.argument<Number>("atSeconds") ?: 1.0).toDouble()
-        @Suppress("UNCHECKED_CAST")
-        val params = call.argument<Map<String, Any?>>("params")
-            ?.mapValues { (it.value as Number).toFloat() }
+        val params = floatParams(call, "params")
         val lutPath = call.argument<String>("lutPath")
+        val filterId2 = call.argument<String>("filterId2")
+        val params2 = floatParams(call, "params2")
         ioExecutor.execute {
             try {
                 val saved = MediaProcessor.previewFilter(
                     context, input, output, filterId, params, lutPath,
-                    isVideo, atSeconds,
+                    isVideo, atSeconds, filterId2, params2,
                 )
                 mainHandler.post { result.success(saved) }
             } catch (t: Throwable) {
@@ -272,10 +284,10 @@ class CameraFilterEnginePlugin(private val initialActivity: Activity? = null)
         val input = call.argument<String>("inputPath")!!
         val output = call.argument<String>("outputPath")!!
         val filterId = call.argument<String>("filterId") ?: "none"
-        @Suppress("UNCHECKED_CAST")
-        val params = call.argument<Map<String, Any?>>("params")
-            ?.mapValues { (it.value as Number).toFloat() }
+        val params = floatParams(call, "params")
         val lutPath = call.argument<String>("lutPath")
+        val filterId2 = call.argument<String>("filterId2")
+        val params2 = floatParams(call, "params2")
 
         // Tell any in-flight processVideo job to stop, then own the new flag.
         currentVideoCancel?.set(true)
@@ -291,6 +303,8 @@ class CameraFilterEnginePlugin(private val initialActivity: Activity? = null)
                         mainHandler.post { progressSink?.success(pd) }
                     },
                     cancel = cancel,
+                    filterId2 = filterId2,
+                    params2 = params2,
                 )
                 mainHandler.post { result.success(saved) }
             } catch (_: MediaProcessor.CancelledException) {

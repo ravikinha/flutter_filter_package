@@ -67,6 +67,13 @@ class FilterEngine {
     return r == 'front' ? CameraLens.front : CameraLens.back;
   }
 
+  /// Set the camera zoom as a normalized 0..1 value (0 = widest, 1 = max).
+  Future<void> setZoom(double level) {
+    return _method.invokeMethod('setZoom', {
+      'level': level.clamp(0.0, 1.0),
+    });
+  }
+
   Future<String> takePicture(String path) async {
     final r = await _method.invokeMethod<String>('takePicture', {'path': path});
     return r ?? path;
@@ -93,6 +100,8 @@ class FilterEngine {
     required bool isVideo,
     Map<String, double>? params,
     double atSeconds = 1.0,
+    String? colorFilterId,
+    Map<String, double>? colorParams,
   }) async {
     final r = await _method.invokeMethod<String>('previewFilter', {
       'inputPath': inputPath,
@@ -101,17 +110,23 @@ class FilterEngine {
       'isVideo': isVideo,
       'atSeconds': atSeconds,
       if (params != null) 'params': params,
+      if (colorFilterId != null) 'filterId2': colorFilterId,
+      if (colorParams != null) 'params2': colorParams,
     });
     return r ?? outputPath;
   }
 
-  /// Apply a filter to an existing image file on disk. Returns the saved path.
+  /// Apply a filter to an existing image file on disk. An optional second
+  /// [colorFilterId] (a pure colour grade) is stacked on top of the primary
+  /// effect filter in the same shader pass. Returns the saved path.
   Future<String> processImage({
     required String inputPath,
     required String outputPath,
     required String filterId,
     Map<String, double>? params,
     String? lutPath,
+    String? colorFilterId,
+    Map<String, double>? colorParams,
   }) async {
     final r = await _method.invokeMethod<String>('processImage', {
       'inputPath': inputPath,
@@ -119,6 +134,8 @@ class FilterEngine {
       'filterId': filterId,
       if (params != null) 'params': params,
       if (lutPath != null) 'lutPath': lutPath,
+      if (colorFilterId != null) 'filterId2': colorFilterId,
+      if (colorParams != null) 'params2': colorParams,
     });
     return r ?? outputPath;
   }
@@ -129,13 +146,17 @@ class FilterEngine {
       _method.invokeMethod('cancelProcessing');
 
   /// Apply a filter to an existing video file (audio is passed through).
-  /// Always renders at the source's full resolution and bitrate.
+  /// Always renders at the source's full resolution and bitrate. An optional
+  /// second [colorFilterId] colour grade is stacked on top of the primary
+  /// effect filter in the same shader pass.
   Future<String> processVideo({
     required String inputPath,
     required String outputPath,
     required String filterId,
     Map<String, double>? params,
     String? lutPath,
+    String? colorFilterId,
+    Map<String, double>? colorParams,
   }) async {
     final r = await _method.invokeMethod<String>('processVideo', {
       'inputPath': inputPath,
@@ -143,6 +164,8 @@ class FilterEngine {
       'filterId': filterId,
       if (params != null) 'params': params,
       if (lutPath != null) 'lutPath': lutPath,
+      if (colorFilterId != null) 'filterId2': colorFilterId,
+      if (colorParams != null) 'params2': colorParams,
     });
     return r ?? outputPath;
   }

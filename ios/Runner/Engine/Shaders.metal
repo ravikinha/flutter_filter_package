@@ -18,6 +18,11 @@ struct Uniforms {
     float  p0;
     float  p1;
     float  p2;
+    // Optional second-stage colour grade (applied after the primary filter).
+    int    filterIdx2;
+    float  p0b;
+    float  p1b;
+    float  p2b;
 };
 
 vertex VSOut fsq_vs(uint vid [[vertex_id]]) {
@@ -567,6 +572,19 @@ fragment float4 filter_fs(VSOut in [[stage_in]],
         case 30: col = fNeuralGrid(src, uv, srcTex, texSampler, U.resolution, U.time, U.p0, U.p1, U.p2); break;
         case 31: col = fDogpatchPro(src, uv, srcTex, texSampler, U.resolution, U.time, U.p0, U.p1, U.p2); break;
         default: col = src; break;
+    }
+
+    // Optional second-stage colour grade — pure per-pixel, fed the result of
+    // the primary filter. Only the colour filters are valid here.
+    switch (U.filterIdx2) {
+        case 1:  col = fKodak(col, U.p0b, U.p1b, U.p2b); break;
+        case 2:  col = fVintage(col, uv, U.p0b, U.p1b); break;
+        case 3:  col = fRetro(col, uv, U.p0b, U.p1b, U.p2b); break;
+        case 8:  col = fCinematic(col, U.p0b, U.p1b, U.p2b); break;
+        case 9:  col = fCoolBlue(col, U.p0b, U.p1b); break;
+        case 13: col = fMatrix(col, uv, U.time, U.p0b, U.p1b); break;
+        case 15: col = fThermal(col, U.p0b); break;
+        default: break;
     }
 
     if (U.lutMix > 0.001) {

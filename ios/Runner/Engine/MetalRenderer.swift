@@ -27,6 +27,9 @@ final class MetalRenderer: NSObject, FlutterTexture {
 
     private var filterIdx: Int32 = 0
     private var params: [Float] = [0, 0, 0]
+    // Optional second-stage colour grade.
+    private var filterIdx2: Int32 = 0
+    private var params2: [Float] = [0, 0, 0]
 
     private let textureSampler: MTLSamplerState
     private let lutSampler: MTLSamplerState
@@ -110,6 +113,17 @@ final class MetalRenderer: NSObject, FlutterTexture {
         filterIdx = filterIndex(for: id)
         self.params = [0, 0, 0]
         if let p = params { applyParams(id: id, p: p) }
+    }
+
+    /// Set the optional second-stage colour grade. id == "none" clears it.
+    func setFilter2(id: String?, params: [String: Float]?) {
+        guard let id = id, id != "none" else {
+            filterIdx2 = 0
+            params2 = [0, 0, 0]
+            return
+        }
+        filterIdx2 = filterIndex(for: id)
+        params2 = paramArray(id: id, p: params ?? [:])
     }
 
     func setParam(key: String, value: Float) {
@@ -227,7 +241,9 @@ final class MetalRenderer: NSObject, FlutterTexture {
             resolution: SIMD2<Float>(Float(width), Float(height)),
             filterIdx: filterIdx,
             lutMix: lutMix,
-            p0: params[0], p1: params[1], p2: params[2]
+            p0: params[0], p1: params[1], p2: params[2],
+            filterIdx2: filterIdx2,
+            p0b: params2[0], p1b: params2[1], p2b: params2[2]
         )
         enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
@@ -290,7 +306,13 @@ final class MetalRenderer: NSObject, FlutterTexture {
     }
 
     private func applyParams(id: String, p: [String: Float]) {
-        params = [0, 0, 0]
+        params = paramArray(id: id, p: p)
+    }
+
+    /// Pure mapping from a filter id + its param dict to the positional
+    /// [p0, p1, p2] slots the shader expects.
+    private func paramArray(id: String, p: [String: Float]) -> [Float] {
+        var params: [Float] = [0, 0, 0]
         switch id {
         case "kodak":
             params[0] = p["warmth"] ?? 0
@@ -401,6 +423,7 @@ final class MetalRenderer: NSObject, FlutterTexture {
             params[2] = p["dogpatchTexture"] ?? 0
         default: break
         }
+        return params
     }
 }
 
@@ -412,4 +435,9 @@ private struct Uniforms {
     var p0: Float
     var p1: Float
     var p2: Float
+    // Must match the order in Shaders.metal's Uniforms struct.
+    var filterIdx2: Int32
+    var p0b: Float
+    var p1b: Float
+    var p2b: Float
 }

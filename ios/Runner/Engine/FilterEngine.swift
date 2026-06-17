@@ -145,6 +145,22 @@ final class FilterEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         return lensFront
     }
 
+    /// Normalized 0..1 zoom mapped onto the device's usable zoom range
+    /// (capped at 6× so the digital crop doesn't get unusably soft).
+    func setZoom(level: Float) {
+        guard let device = currentInput?.device else { return }
+        let clamped = max(0.0, min(1.0, CGFloat(level)))
+        let maxUseful = min(device.activeFormat.videoMaxZoomFactor, 6.0)
+        let factor = 1.0 + clamped * (maxUseful - 1.0)
+        do {
+            try device.lockForConfiguration()
+            device.videoZoomFactor = max(1.0, min(factor, device.activeFormat.videoMaxZoomFactor))
+            device.unlockForConfiguration()
+        } catch {
+            print("setZoom failed: \(error)")
+        }
+    }
+
     func takePicture(path: String, callback: @escaping (String) -> Void) {
         pendingPhotoPath = path
         pendingPhotoCallback = callback

@@ -9,13 +9,28 @@ import 'package:video_player/video_player.dart';
 import '../engine/filter_engine.dart';
 import '../models/filter.dart';
 import '../widgets/filter_picker.dart';
+import '../widgets/param_sheet.dart';
 import 'annotate_screen.dart';
 import 'capture_viewer.dart';
 import 'crop_screen.dart';
 import 'trim_screen.dart';
 
 class ImportEditScreen extends StatefulWidget {
-  const ImportEditScreen({super.key});
+  /// Optional source to load straight away (skips the pick sheet). Used when
+  /// pushed from the camera capture/record flow so the just-taken photo or
+  /// video lands directly in the editor.
+  final XFile? initialSource;
+  final bool? initialIsVideo;
+  final CameraFilter? initialFilter;
+  final Map<String, double>? initialParams;
+
+  const ImportEditScreen({
+    super.key,
+    this.initialSource,
+    this.initialIsVideo,
+    this.initialFilter,
+    this.initialParams,
+  });
 
   @override
   State<ImportEditScreen> createState() => _ImportEditScreenState();
@@ -27,8 +42,14 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
   bool _isVideo = false;
   VideoPlayerController? _video;
 
-  CameraFilter _filter = FilterRegistry.all.first;
+  // Two stacked selections: an effect (drives the shader render) and a colour
+  // grade (a cheap per-pixel pass on top). Either can be Original (none).
+  CameraFilter _filter = FilterRegistry.all.first;       // effect slot
   Map<String, double> _params = {};
+  CameraFilter _color = FilterRegistry.all.first;        // colour slot
+  Map<String, double> _colorParams = {};
+  // Which slot the Tune button edits (set on selection).
+  bool _tuneColor = false;
 
   bool _processing = false;
   double _progress = 0;
@@ -54,8 +75,55 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
   @override
   void initState() {
     super.initState();
-    // Open the picker right away.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _pick());
+    // When pushed with a pre-supplied source (camera capture / record path,
+    // or the camera screen's library button), skip the picker and load that
+    // file directly with the caller's filter selection.
+    if (widget.initialSource != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadInitial());
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pick());
+    }
+  }
+
+  Future<void> _loadInitial() async {
+    final src = widget.initialSource!;
+    final isVideo = widget.initialIsVideo ?? false;
+    final filter = widget.initialFilter ?? FilterRegistry.all.first;
+    final params = Map<String, double>.from(
+      widget.initialParams ?? filter.defaultParams,
+    );
+    // Route the camera's filter into the correct slot.
+    final intoEffect = _effectFilters.contains(filter.id);
+    setState(() {
+      _source = src;
+      _isVideo = isVideo;
+      if (intoEffect) {
+        _filter = filter;
+        _params = params;
+      } else {
+        _color = filter;
+        _colorParams = params;
+        _tuneColor = filter.id != 'none';
+      }
+    });
+    if (isVideo) {
+      final c = VideoPlayerController.file(File(src.path));
+      _video = c;
+      c.initialize().then((_) {
+        if (!mounted) { c.dispose(); return; }
+        setState(() {});
+        c..setLooping(true)..play();
+      }).catchError((_) {
+        if (!mounted) return;
+        c.dispose();
+        setState(() => _video = null);
+      });
+    }
+    // If the caller pre-selected an effect/colour filter, kick the preview
+    // render so the user immediately sees their filter applied.
+    if (filter.id != 'none') {
+      _schedulePreview();
+    }
   }
 
   @override
@@ -142,8 +210,7 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
     setState(() {
       _source = source;
       _isVideo = isVideo;
-      _filter = FilterRegistry.all.first;
-      _params = _filter.defaultParams;
+      _resetFilters();
     });
     if (isVideo) {
       final c = VideoPlayerController.file(File(source.path));
@@ -228,12 +295,11 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
     _video = null;
     oldVideo?.dispose();
 
-    // Reset filter back to Original and clear the rendered preview file.
+    // Reset both filter slots back to Original and clear the rendered preview.
     setState(() {
       _source = newSource;
       _isVideo = isVideo;
-      _filter = FilterRegistry.all.first;
-      _params = _filter.defaultParams;
+      _resetFilters();
       _previewPath = null;
       _previewVersion++;
     });
@@ -253,10 +319,64 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
     }
   }
 
-  void _onFilterSelected(CameraFilter f) {
+  // Whichever filter the Tune button currently edits.
+  CameraFilter get _tuneFilter => _tuneColor ? _color : _filter;
+  Map<String, double> get _tuneParams => _tuneColor ? _colorParams : _params;
+
+  String? get _colorFilterArg => _color.id == 'none' ? null : _color.id;
+  Map<String, double>? get _colorParamsArg =>
+      _color.id == 'none' ? null : _colorParams;
+
+  Future<void> _openParamSheet() async {
+    if (_tuneFilter.params.isEmpty) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.black87,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => ParamSheet(
+        filter: _tuneFilter,
+        values: _tuneParams,
+        onChanged: (k, v) {
+          _tuneParams[k] = v;
+          // Re-render preview on release of any slider so the on-screen
+          // image / video reflects the new params.
+          _schedulePreview();
+        },
+      ),
+    );
+  }
+
+  void _resetFilters() {
+    final none = FilterRegistry.all.first;
+    _filter = none;
+    _params = none.defaultParams;
+    _color = none;
+    _colorParams = none.defaultParams;
+    _tuneColor = false;
+  }
+
+  /// Effect-slot selection (drives the shader render). Effects section.
+  void _onEffectSelected(CameraFilter f) {
     setState(() {
       _filter = f;
       _params = f.defaultParams;
+      _tuneColor = false;
+      _effectExpanded = true;
+      _colorExpanded = false;
+    });
+    _schedulePreview();
+  }
+
+  /// Colour-slot selection (stacked grade). Color section.
+  void _onColorSelected(CameraFilter f) {
+    setState(() {
+      _color = f;
+      _colorParams = f.defaultParams;
+      _tuneColor = f.id != 'none';
+      _colorExpanded = true;
+      _effectExpanded = false;
     });
     _schedulePreview();
   }
@@ -281,16 +401,18 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
           _previewVersion++;
         });
       }
-      if (_effectFilters.contains(_filter.id)) {
+      // An effect needs a shader render. A colour-only selection is shown live
+      // with a ColorFilter matrix on the playing video (no render needed).
+      if (_filter.id != 'none') {
         await _renderVideoPreview();
       } else {
-        // Coming back to a colour filter — cancel any in-flight effect render,
-        // drop the cached preview player and resume the original video.
         await _dropVideoPreview();
       }
       return;
     }
-    if (_filter.id == 'none') {
+    // Images: render whenever either slot is non-Original (both stack in one
+    // pass). If both are Original, just show the source.
+    if (_filter.id == 'none' && _color.id == 'none') {
       setState(() {
         _previewPath = null;
         _previewVersion++;
@@ -313,6 +435,8 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
         isVideo: false,
         params: _params,
         atSeconds: at,
+        colorFilterId: _colorFilterArg,
+        colorParams: _colorParamsArg,
       );
       if (!mounted || seq != _previewSeq) {
         // Stale completion — newer request already kicked off; throw the file
@@ -355,13 +479,13 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
           ? '${dir.path}/CFE_imported_$ts.mp4'
           : '${dir.path}/CFE_imported_$ts.jpg';
       String saved;
-      final sig = _signatureFor(_filter.id, _params);
+      final sig = _combinedSignature();
       if (_isVideo &&
           _videoPreviewPath != null &&
           _videoPreviewKey == sig &&
           File(_videoPreviewPath!).existsSync()) {
         // The auto-preview render is full quality and already exists for
-        // this exact filter + params selection. Copy it instead of
+        // this exact effect + colour + params selection. Copy it instead of
         // re-rendering — saves the full processVideo run on Apply.
         await File(_videoPreviewPath!).copy(outPath);
         saved = outPath;
@@ -371,6 +495,8 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
           outputPath: outPath,
           filterId: _filter.id,
           params: _params,
+          colorFilterId: _colorFilterArg,
+          colorParams: _colorParamsArg,
         );
       } else {
         saved = await FilterEngine.instance.processImage(
@@ -378,6 +504,8 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
           outputPath: outPath,
           filterId: _filter.id,
           params: _params,
+          colorFilterId: _colorFilterArg,
+          colorParams: _colorParamsArg,
         );
       }
 
@@ -405,6 +533,30 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
     }
   }
 
+  // Section expand state for the bottom toolbar.
+  bool _colorExpanded = true;
+  bool _effectExpanded = false;
+
+  /// Filters that work as direct ColorFilter overlays on a playing video and
+  /// don't need a shader render to preview — the "Color" tab.
+  List<CameraFilter> get _colorFilters => FilterRegistry.all
+      .where((f) => !_effectFilters.contains(f.id))
+      .toList();
+
+  /// Filters that require the GPU shader pipeline — Blur, Glitch, VHS,
+  /// Cyberpunk, Aurora, Dogpatch Pro, etc. The "Effects" tab. Original (none)
+  /// is prepended so the user can clear the effect.
+  List<CameraFilter> get _renderFilters => [
+        FilterRegistry.all.first, // Original / none
+        ...FilterRegistry.all.where((f) => _effectFilters.contains(f.id)),
+      ];
+
+  /// Signature of the full effect+colour+params combination, used to key the
+  /// cached video render so Apply can reuse it and so a re-tap of the same
+  /// combo doesn't re-render.
+  String _combinedSignature() =>
+      '${_signatureFor(_filter.id, _params)}#${_signatureFor(_color.id, _colorParams)}';
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -413,24 +565,6 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
         backgroundColor: Colors.black,
         title: const Text('Import & Filter'),
         actions: [
-          if (_source != null)
-            IconButton(
-              icon: const Icon(Icons.crop, color: Colors.white),
-              tooltip: 'Crop',
-              onPressed: _processing ? null : _openCrop,
-            ),
-          if (_source != null && _isVideo)
-            IconButton(
-              icon: const Icon(Icons.content_cut, color: Colors.white),
-              tooltip: 'Trim',
-              onPressed: _processing ? null : _openTrim,
-            ),
-          if (_source != null)
-            IconButton(
-              icon: const Icon(Icons.draw, color: Colors.white),
-              tooltip: 'Annotate',
-              onPressed: _processing ? null : _openAnnotate,
-            ),
           if (_source != null)
             TextButton(
               onPressed: _processing ? null : _apply,
@@ -480,12 +614,190 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
             child: _isVideo ? _buildVideoPreview() : _buildImagePreview(),
           ),
         ),
-        FilterPicker(
-          filters: FilterRegistry.all,
-          selectedId: _filter.id,
-          onSelected: _onFilterSelected,
+        _buildBottomToolbar(),
+      ],
+    );
+  }
+
+  Widget _buildBottomToolbar() {
+    return Container(
+      color: Colors.black87,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Tool icons row — Crop / Trim (video only) / Annotate / Tune.
+            _buildToolRow(),
+            const Divider(color: Colors.white12, height: 1),
+            // Expandable Color filters — applied as a per-pixel grade.
+            _buildFilterSection(
+              title: 'Color',
+              icon: Icons.palette_outlined,
+              filters: _colorFilters,
+              selectedId: _color.id,
+              activeName: _color.id == 'none' ? null : _color.name,
+              onSelected: _onColorSelected,
+              expanded: _colorExpanded,
+              onToggle: () => setState(() {
+                _colorExpanded = !_colorExpanded;
+                if (_colorExpanded) _effectExpanded = false;
+              }),
+            ),
+            const Divider(color: Colors.white12, height: 1),
+            // Expandable Effect filters — the primary shader pass.
+            _buildFilterSection(
+              title: 'Effects',
+              icon: Icons.auto_fix_high_outlined,
+              filters: _renderFilters,
+              selectedId: _filter.id,
+              activeName: _filter.id == 'none' ? null : _filter.name,
+              onSelected: _onEffectSelected,
+              expanded: _effectExpanded,
+              onToggle: () => setState(() {
+                _effectExpanded = !_effectExpanded;
+                if (_effectExpanded) _colorExpanded = false;
+              }),
+            ),
+          ],
         ),
-        const SizedBox(height: 16),
+      ),
+    );
+  }
+
+  Widget _buildToolRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _toolButton(
+            icon: Icons.crop,
+            label: 'Crop',
+            onTap: _processing ? null : _openCrop,
+          ),
+          if (_isVideo)
+            _toolButton(
+              icon: Icons.content_cut,
+              label: 'Trim',
+              onTap: _processing ? null : _openTrim,
+            ),
+          _toolButton(
+            icon: Icons.draw,
+            label: 'Annotate',
+            onTap: _processing ? null : _openAnnotate,
+          ),
+          _toolButton(
+            icon: Icons.tune,
+            label: 'Tune',
+            onTap: _tuneFilter.params.isEmpty || _processing ? null : _openParamSheet,
+            dimmed: _tuneFilter.params.isEmpty,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+    bool dimmed = false,
+  }) {
+    final color = onTap == null || dimmed ? Colors.white38 : Colors.white;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 4),
+            Text(label, style: TextStyle(color: color, fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterSection({
+    required String title,
+    required IconData icon,
+    required List<CameraFilter> filters,
+    required String selectedId,
+    required String? activeName,
+    required ValueChanged<CameraFilter> onSelected,
+    required bool expanded,
+    required VoidCallback onToggle,
+  }) {
+    final activeHere = activeName != null;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: onToggle,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: [
+                Icon(icon, color: Colors.white70, size: 18),
+                const SizedBox(width: 10),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (activeHere) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0x33FFD400),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      activeName,
+                      style: const TextStyle(
+                        color: Color(0xFFFFD400), fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+                const Spacer(),
+                Text(
+                  '${filters.length}',
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+                const SizedBox(width: 6),
+                AnimatedRotation(
+                  turns: expanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: const Icon(
+                    Icons.expand_more, color: Colors.white70, size: 22,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: expanded
+              ? Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: FilterPicker(
+                    filters: filters,
+                    selectedId: selectedId,
+                    onSelected: onSelected,
+                  ),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
       ],
     );
   }
@@ -529,11 +841,14 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final isEffectFilter = _effectFilters.contains(_filter.id);
+    final hasEffect = _filter.id != 'none';
+    // Live video shows the colour grade as a ColorFilter matrix overlay; the
+    // effect (if any) is rendered into _videoPreview above, so here we only
+    // need the colour approximation underneath the render-progress overlay.
     final originalPlayer = AspectRatio(
       aspectRatio: v.value.aspectRatio,
       child: ColorFiltered(
-        colorFilter: _previewMatrix(_filter.id),
+        colorFilter: _previewMatrix(_color.id),
         child: VideoPlayer(v),
       ),
     );
@@ -542,7 +857,7 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
       alignment: Alignment.center,
       children: [
         Center(child: originalPlayer),
-        if (isEffectFilter && _videoPreviewProcessing)
+        if (hasEffect && _videoPreviewProcessing)
           Container(
             color: Colors.black54,
             alignment: Alignment.center,
@@ -577,7 +892,7 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
   }
 
   Future<void> _renderVideoPreview() async {
-    final sig = _signatureFor(_filter.id, _params);
+    final sig = _combinedSignature();
     // Already showing this exact selection? Nothing to do.
     if (_videoPreviewPath != null && _videoPreviewKey == sig) return;
     // Same job already in flight? Let it finish.
@@ -622,6 +937,8 @@ class _ImportEditScreenState extends State<ImportEditScreen> {
         outputPath: outPath,
         filterId: _filter.id,
         params: _params,
+        colorFilterId: _colorFilterArg,
+        colorParams: _colorParamsArg,
       );
       // Native returns the output path on success, '' on cancellation.
       if (r.isNotEmpty && File(r).existsSync()) rendered = r;

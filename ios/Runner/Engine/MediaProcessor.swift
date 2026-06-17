@@ -21,7 +21,9 @@ enum MediaProcessor {
         outputPath: String,
         filterId: String,
         params: [String: Float]?,
-        lutPath: String?
+        lutPath: String?,
+        filterId2: String? = nil,
+        params2: [String: Float]? = nil
     ) throws -> String {
         guard let image = UIImage(contentsOfFile: inputPath),
               let cg = image.cgImage else {
@@ -43,6 +45,7 @@ enum MediaProcessor {
 
         let renderer = try MetalRenderer(width: w, height: h)
         renderer.setFilter(id: filterId, params: params)
+        renderer.setFilter2(id: filterId2, params: params2)
         if let lutPath = lutPath { renderer.setLut(path: lutPath) }
 
         let sem = DispatchSemaphore(value: 0)
@@ -480,12 +483,15 @@ enum MediaProcessor {
         params: [String: Float]?,
         lutPath: String?,
         isVideo: Bool,
-        atSeconds: Double
+        atSeconds: Double,
+        filterId2: String? = nil,
+        params2: [String: Float]? = nil
     ) throws -> String {
         if !isVideo {
             return try processImage(
                 inputPath: inputPath, outputPath: outputPath,
-                filterId: filterId, params: params, lutPath: lutPath
+                filterId: filterId, params: params, lutPath: lutPath,
+                filterId2: filterId2, params2: params2
             )
         }
         // Extract a frame at the requested time. Cap to clip duration so very
@@ -509,7 +515,8 @@ enum MediaProcessor {
         defer { try? FileManager.default.removeItem(at: frameURL) }
         return try processImage(
             inputPath: frameURL.path, outputPath: outputPath,
-            filterId: filterId, params: params, lutPath: lutPath
+            filterId: filterId, params: params, lutPath: lutPath,
+            filterId2: filterId2, params2: params2
         )
     }
 
@@ -553,7 +560,9 @@ enum MediaProcessor {
         params: [String: Float]?,
         lutPath: String?,
         progress: @escaping (Double) -> Void,
-        cancel: CancelFlag = CancelFlag()
+        cancel: CancelFlag = CancelFlag(),
+        filterId2: String? = nil,
+        params2: [String: Float]? = nil
     ) throws -> String {
         let inputURL = URL(fileURLWithPath: inputPath)
         let asset = AVURLAsset(url: inputURL)
@@ -642,6 +651,7 @@ enum MediaProcessor {
 
         let renderer = try MetalRenderer(width: outW, height: outH)
         renderer.setFilter(id: filterId, params: params)
+        renderer.setFilter2(id: filterId2, params: params2)
         if let lutPath = lutPath { renderer.setLut(path: lutPath) }
 
         writer.startWriting()

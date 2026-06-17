@@ -77,6 +77,10 @@ class GLRenderer(
     private var uP0Loc = 0
     private var uP1Loc = 0
     private var uP2Loc = 0
+    private var uFilter2Loc = 0
+    private var uP0bLoc = 0
+    private var uP1bLoc = 0
+    private var uP2bLoc = 0
 
     private var lutTextureId = 0
     private var lutMix = 0f
@@ -287,6 +291,10 @@ class GLRenderer(
         uP0Loc = GLES30.glGetUniformLocation(program, "uP0")
         uP1Loc = GLES30.glGetUniformLocation(program, "uP1")
         uP2Loc = GLES30.glGetUniformLocation(program, "uP2")
+        uFilter2Loc = GLES30.glGetUniformLocation(program, "uFilter2")
+        uP0bLoc = GLES30.glGetUniformLocation(program, "uP0b")
+        uP1bLoc = GLES30.glGetUniformLocation(program, "uP1b")
+        uP2bLoc = GLES30.glGetUniformLocation(program, "uP2b")
 
         running = true
     }
@@ -371,6 +379,11 @@ class GLRenderer(
         GLES30.glUniform1f(uP0Loc, params[0])
         GLES30.glUniform1f(uP1Loc, params[1])
         GLES30.glUniform1f(uP2Loc, params[2])
+        // Live camera path uses a single filter — no second-stage grade.
+        GLES30.glUniform1i(uFilter2Loc, 0)
+        GLES30.glUniform1f(uP0bLoc, 0f)
+        GLES30.glUniform1f(uP1bLoc, 0f)
+        GLES30.glUniform1f(uP2bLoc, 0f)
 
         // fullscreen quad
         GLES30.glEnableVertexAttribArray(aPositionLoc)

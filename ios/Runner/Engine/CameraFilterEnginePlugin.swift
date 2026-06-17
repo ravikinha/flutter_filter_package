@@ -60,6 +60,10 @@ public class CameraFilterEnginePlugin: NSObject, FlutterPlugin, FlutterStreamHan
         case "switchCamera":
             let front = engine?.switchCamera() ?? false
             result(front ? "front" : "back")
+        case "setZoom":
+            let level = (args["level"] as? NSNumber)?.floatValue ?? 0
+            engine?.setZoom(level: level)
+            result(nil)
         case "takePicture":
             if let path = args["path"] as? String {
                 engine?.takePicture(path: path) { saved in result(saved) }
@@ -137,6 +141,8 @@ public class CameraFilterEnginePlugin: NSObject, FlutterPlugin, FlutterStreamHan
         }
         let params = (args["params"] as? [String: NSNumber])?.mapValues { $0.floatValue }
         let lut = args["lutPath"] as? String
+        let filterId2 = args["filterId2"] as? String
+        let params2 = (args["params2"] as? [String: NSNumber])?.mapValues { $0.floatValue }
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let path = try MediaProcessor.processImage(
@@ -144,7 +150,9 @@ public class CameraFilterEnginePlugin: NSObject, FlutterPlugin, FlutterStreamHan
                     outputPath: output,
                     filterId: filterId,
                     params: params,
-                    lutPath: lut
+                    lutPath: lut,
+                    filterId2: filterId2,
+                    params2: params2
                 )
                 DispatchQueue.main.async { result(path) }
             } catch {
@@ -166,12 +174,15 @@ public class CameraFilterEnginePlugin: NSObject, FlutterPlugin, FlutterStreamHan
         let lut = args["lutPath"] as? String
         let isVideo = (args["isVideo"] as? Bool) ?? false
         let atSeconds = (args["atSeconds"] as? NSNumber)?.doubleValue ?? 1.0
+        let filterId2 = args["filterId2"] as? String
+        let params2 = (args["params2"] as? [String: NSNumber])?.mapValues { $0.floatValue }
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let path = try MediaProcessor.previewFilter(
                     inputPath: input, outputPath: output,
                     filterId: filterId, params: params, lutPath: lut,
-                    isVideo: isVideo, atSeconds: atSeconds
+                    isVideo: isVideo, atSeconds: atSeconds,
+                    filterId2: filterId2, params2: params2
                 )
                 DispatchQueue.main.async { result(path) }
             } catch {
@@ -292,6 +303,8 @@ public class CameraFilterEnginePlugin: NSObject, FlutterPlugin, FlutterStreamHan
         }
         let params = (args["params"] as? [String: NSNumber])?.mapValues { $0.floatValue }
         let lut = args["lutPath"] as? String
+        let filterId2 = args["filterId2"] as? String
+        let params2 = (args["params2"] as? [String: NSNumber])?.mapValues { $0.floatValue }
 
         // Tell any in-flight processVideo to stop, then own the new flag.
         currentVideoCancel?.cancelled = true
@@ -312,7 +325,9 @@ public class CameraFilterEnginePlugin: NSObject, FlutterPlugin, FlutterStreamHan
                     progress: { p in
                         self?.progressSink?(p)
                     },
-                    cancel: cancel
+                    cancel: cancel,
+                    filterId2: filterId2,
+                    params2: params2
                 )
                 DispatchQueue.main.async { result(path) }
             } catch is MediaProcessor.CancelledError {

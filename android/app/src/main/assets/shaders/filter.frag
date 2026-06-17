@@ -19,6 +19,14 @@ uniform float uP0;
 uniform float uP1;
 uniform float uP2;
 
+// Optional second-stage COLOR grade applied after the primary filter. This
+// lets the app stack one effect (which samples the texture) + one colour
+// grade (pure per-pixel) in a single pass at 60 FPS. uFilter2 == 0 -> none.
+uniform int uFilter2;
+uniform float uP0b;
+uniform float uP1b;
+uniform float uP2b;
+
 in vec2 vTex;
 out vec4 fragColor;
 
@@ -616,6 +624,61 @@ vec3 fDogpatchPro(vec3 c, vec2 uv) {
     return clamp(c, 0.0, 1.0);
 }
 
+// Per-pixel COLOUR grade used for the optional second stage. Only the
+// non-sampling (pure colour) filters are valid here — they take the
+// already-rendered colour `c` as input and need their own param set.
+vec3 colorGrade(int which, vec3 c, vec2 uv, float p0, float p1, float p2) {
+    if (which == 1) {            // Kodak
+        c = pow(c, vec3(0.96, 0.98, 1.05));
+        c.r += 0.04 * p0; c.g += 0.025 * p0; c.b -= 0.03 * p0;
+        c = contrastAdj(c, 1.0 + p1 * 0.3);
+        c = saturationAdj(c, 1.0 - p2 * 0.3);
+        return clamp(c, 0.0, 1.0);
+    } else if (which == 2) {     // Vintage
+        c = mix(c, sepia(c), p0);
+        c = mix(c, c * 0.92 + 0.06, 0.5);
+        c = saturationAdj(c, 0.75);
+        return vignette(c, uv, p1);
+    } else if (which == 3) {     // Retro
+        c.r += 0.08 * p0;
+        c.b += 0.03 * (1.0 - p0);
+        c = mix(c, vec3(0.55, 0.5, 0.4), p1 * 0.3);
+        float l = smoothstep(0.9, 0.0, distance(uv, vec2(0.15, 0.85)));
+        c += vec3(0.45, 0.12, 0.18) * l * p2;
+        return clamp(contrastAdj(c, 0.95), 0.0, 1.0);
+    } else if (which == 8) {     // Cinematic
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        vec3 graded = mix(
+            mix(c, c * vec3(0.08, 0.30, 0.36) * 2.0, p0 * (1.0 - l)),
+            mix(c, c * vec3(0.95, 0.62, 0.34) * 1.6, p1 * l),
+            l
+        );
+        return clamp(contrastAdj(graded, 1.0 + p2 * 0.4), 0.0, 1.0);
+    } else if (which == 9) {     // Cool Blue
+        c.r -= 0.05 * p0; c.b += 0.10 * p0;
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        c = mix(c, mix(c * vec3(0.6, 0.7, 1.1), c, l), p0);
+        return clamp(contrastAdj(c, 1.0 + p1 * 0.3), 0.0, 1.0);
+    } else if (which == 13) {    // Matrix
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        vec3 m = vec3(l * 0.05, l * 1.10, l * 0.20);
+        float colx = floor(uv.x * 48.0);
+        float t = uTime * (0.5 + p1 * 4.0) + colx * 7.3;
+        float streak = step(0.55, hash(vec2(colx, floor(t + uv.y * 28.0))));
+        m += vec3(0.0, streak * 0.55, 0.0) * p1;
+        return clamp(mix(c * 0.18, m, p0), 0.0, 1.0);
+    } else if (which == 15) {    // Thermal
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        vec3 th;
+        if (l < 0.25)      th = mix(vec3(0.0, 0.0, 0.30), vec3(0.0, 0.0, 1.0), l * 4.0);
+        else if (l < 0.50) th = mix(vec3(0.0, 0.0, 1.0),  vec3(1.0, 0.0, 0.0), (l - 0.25) * 4.0);
+        else if (l < 0.75) th = mix(vec3(1.0, 0.0, 0.0),  vec3(1.0, 1.0, 0.0), (l - 0.50) * 4.0);
+        else               th = mix(vec3(1.0, 1.0, 0.0),  vec3(1.0, 1.0, 1.0), (l - 0.75) * 4.0);
+        return clamp(mix(c, th, p0), 0.0, 1.0);
+    }
+    return c;
+}
+
 // ------------------------------------------------------------------------
 void main() {
     vec3 src = texture(uTex, vTex).rgb;
@@ -652,6 +715,9 @@ void main() {
     else if (uFilter == 29) col = fPhotonTrails(src, vTex);
     else if (uFilter == 30) col = fNeuralGrid(src, vTex);
     else if (uFilter == 31) col = fDogpatchPro(src, vTex);
+
+    // Optional second-stage colour grade on the filtered result.
+    if (uFilter2 != 0) col = colorGrade(uFilter2, col, vTex, uP0b, uP1b, uP2b);
 
     col = applyLut(col);
     fragColor = vec4(col, 1.0);

@@ -53,6 +53,8 @@ object MediaProcessor {
         filterId: String,
         params: Map<String, Float>?,
         lutPath: String?,
+        filterId2: String? = null,
+        params2: Map<String, Float>? = null,
     ): String {
         val rawBmp = BitmapFactory.decodeFile(inputPath)
             ?: throw IllegalArgumentException("cannot decode $inputPath")
@@ -102,6 +104,11 @@ object MediaProcessor {
             GLES30.glUniform1f(locs.uP0, p[0])
             GLES30.glUniform1f(locs.uP1, p[1])
             GLES30.glUniform1f(locs.uP2, p[2])
+            val (filterIdx2, p2) = mapFilter(filterId2 ?: "none", params2)
+            GLES30.glUniform1i(locs.uFilter2, filterIdx2)
+            GLES30.glUniform1f(locs.uP0b, p2[0])
+            GLES30.glUniform1f(locs.uP1b, p2[1])
+            GLES30.glUniform1f(locs.uP2b, p2[2])
 
             GLES30.glEnableVertexAttribArray(locs.aPosition)
             GLES30.glVertexAttribPointer(locs.aPosition, 2, GLES30.GL_FLOAT, false, 0, FSQ_POS)
@@ -856,9 +863,12 @@ object MediaProcessor {
         lutPath: String?,
         isVideo: Boolean,
         atSeconds: Double,
+        filterId2: String? = null,
+        params2: Map<String, Float>? = null,
     ): String {
         if (!isVideo) {
-            return processImage(ctx, inputPath, outputPath, filterId, params, lutPath)
+            return processImage(ctx, inputPath, outputPath, filterId, params, lutPath,
+                filterId2, params2)
         }
         val retriever = MediaMetadataRetriever()
         val bmp: Bitmap = try {
@@ -884,7 +894,8 @@ object MediaProcessor {
                 bmp.compress(Bitmap.CompressFormat.JPEG, 92, os)
             }
             bmp.recycle()
-            return processImage(ctx, tmp.absolutePath, outputPath, filterId, params, lutPath)
+            return processImage(ctx, tmp.absolutePath, outputPath, filterId, params, lutPath,
+                filterId2, params2)
         } finally {
             try { tmp.delete() } catch (_: Throwable) {}
         }
@@ -907,6 +918,8 @@ object MediaProcessor {
         lutPath: String?,
         progress: (Float) -> Unit,
         cancel: AtomicBoolean = AtomicBoolean(false),
+        filterId2: String? = null,
+        params2: Map<String, Float>? = null,
     ): String {
         File(outputPath).parentFile?.mkdirs()
         File(outputPath).takeIf { it.exists() }?.delete()
@@ -1057,6 +1070,7 @@ object MediaProcessor {
                                     outW, outH,
                                     timeSec = (System.nanoTime() - startNanos) / 1e9f,
                                     filterId, params, texMatrix,
+                                    filterId2, params2,
                                 )
                                 egl.setPresentationTime(bi.presentationTimeUs * 1000)
                                 egl.swapBuffers()
@@ -1203,6 +1217,7 @@ object MediaProcessor {
         timeSec: Float,
         filterId: String, params: Map<String, Float>?,
         texMatrix: FloatArray,
+        filterId2: String? = null, params2: Map<String, Float>? = null,
     ) {
         GLES30.glViewport(0, 0, w, h)
         GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -1225,6 +1240,11 @@ object MediaProcessor {
         GLES30.glUniform1f(locs.uP0, p[0])
         GLES30.glUniform1f(locs.uP1, p[1])
         GLES30.glUniform1f(locs.uP2, p[2])
+        val (idx2, p2) = mapFilter(filterId2 ?: "none", params2)
+        GLES30.glUniform1i(locs.uFilter2, idx2)
+        GLES30.glUniform1f(locs.uP0b, p2[0])
+        GLES30.glUniform1f(locs.uP1b, p2[1])
+        GLES30.glUniform1f(locs.uP2b, p2[2])
 
         GLES30.glEnableVertexAttribArray(locs.aPosition)
         GLES30.glVertexAttribPointer(locs.aPosition, 2, GLES30.GL_FLOAT, false, 0, FSQ_POS)
@@ -1247,6 +1267,10 @@ object MediaProcessor {
         val uP0 = GLES30.glGetUniformLocation(program, "uP0")
         val uP1 = GLES30.glGetUniformLocation(program, "uP1")
         val uP2 = GLES30.glGetUniformLocation(program, "uP2")
+        val uFilter2 = GLES30.glGetUniformLocation(program, "uFilter2")
+        val uP0b = GLES30.glGetUniformLocation(program, "uP0b")
+        val uP1b = GLES30.glGetUniformLocation(program, "uP1b")
+        val uP2b = GLES30.glGetUniformLocation(program, "uP2b")
         val uTexMatrix = if (hasTexMatrix) GLES30.glGetUniformLocation(program, "uTexMatrix") else -1
     }
 
